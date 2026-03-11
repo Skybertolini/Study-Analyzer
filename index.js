@@ -101,6 +101,35 @@
       }
       .vt-card h2{ margin:0 0 var(--vt-space-2); font-size:var(--vt-fs-lg); }
       .vt-card p{ margin:0; color:var(--vt-text-muted); font-size:var(--vt-fs-sm); }
+      .vt-input,
+      .vt-textarea,
+      .vt-select{
+        width:100%;
+        border:1px solid var(--vt-border);
+        background:var(--vt-surface-muted);
+        color:var(--vt-text);
+        border-radius:var(--vt-radius-md);
+        padding:10px 12px;
+        font:inherit;
+      }
+      .vt-textarea{ min-height:170px; resize:vertical; }
+      .vt-field{ display:grid; gap:6px; margin-bottom:10px; }
+      .vt-field label{ font-size:var(--vt-fs-sm); font-weight:600; }
+      .vt-grid-2{ display:grid; gap:12px; grid-template-columns:1fr; }
+      @media (min-width: 720px){ .vt-grid-2{ grid-template-columns:1fr 1fr; } }
+      .vt-actions{ display:flex; flex-wrap:wrap; gap:10px; }
+      .vt-json-preview{
+        margin-top:12px;
+        background:var(--vt-surface-muted);
+        border:1px solid var(--vt-border);
+        border-radius:var(--vt-radius-md);
+        padding:12px;
+        max-height:280px;
+        overflow:auto;
+        font-size:12px;
+        font-family:ui-monospace, SFMono-Regular, Menlo, monospace;
+        white-space:pre-wrap;
+      }
       .vt-section-spacer{ margin-top:var(--vt-space-4); }
 
       .vt-btn{
@@ -432,6 +461,138 @@
     Object.entries(stats).forEach(([sel, value])=>{ const el = $(sel, panel); if (el) el.textContent = value; });
   }
 
+  const modelDefaults = {
+    week_start: '',
+    title: '',
+    groups: '',
+    frames: '',
+    reads: '',
+    para_lengths: [],
+    images: ''
+  };
+
+  let detectedArticleData = {...modelDefaults};
+  let editableArticleData = {...modelDefaults};
+
+  function normalizeArticleData(data = {}){
+    return {
+      week_start: String(data.week_start || ''),
+      title: String(data.title || ''),
+      groups: String(data.groups || ''),
+      frames: Array.isArray(data.frames) ? data.frames.join(', ') : String(data.frames || ''),
+      reads: Array.isArray(data.reads) ? data.reads.join(', ') : String(data.reads || ''),
+      para_lengths: Array.isArray(data.para_lengths)
+        ? data.para_lengths.map((n)=> Number(n) || 0)
+        : (typeof data.para_lengths === 'string'
+            ? data.para_lengths.split(/[\n,]+/).map((v)=> Number(v.trim()) || 0).filter((n)=> n > 0)
+            : []),
+      images: Array.isArray(data.images) ? data.images.join(', ') : String(data.images || '')
+    };
+  }
+
+  function getEditablePayload(){
+    return {
+      week_start: editableArticleData.week_start,
+      title: editableArticleData.title,
+      groups: editableArticleData.groups,
+      frames: editableArticleData.frames,
+      reads: editableArticleData.reads,
+      para_lengths: editableArticleData.para_lengths,
+      images: editableArticleData.images
+    };
+  }
+
+  function parseArticleText(rawText){
+    const text = String(rawText || '').trim();
+    const paragraphs = text ? text.split(/\n\s*\n+/).map((p)=> p.replace(/\s+/g, ' ').trim()).filter(Boolean) : [];
+    const paraLengths = paragraphs.map((p)=> p.split(/\s+/).filter(Boolean).length);
+    const title = paragraphs[0] ? paragraphs[0].slice(0, 120) : '';
+    const isoWeek = new Date().toISOString().slice(0, 10);
+    const groups = paraLengths.length > 1 ? `1-${paraLengths.length}` : (paraLengths.length === 1 ? '1' : '');
+    return normalizeArticleData({
+      week_start: isoWeek,
+      title,
+      groups,
+      frames: '',
+      reads: '',
+      para_lengths: paraLengths,
+      images: ''
+    });
+  }
+
+  function setDetectedAndEditableData(data){
+    detectedArticleData = normalizeArticleData(data);
+    editableArticleData = normalizeArticleData(data);
+    window.__VT_DETECTED_ARTICLE_DATA = {...detectedArticleData};
+    window.__VT_EDITABLE_ARTICLE_DATA = {...editableArticleData};
+    syncEditableForm();
+    syncDataBindings();
+  }
+
+  function syncEditableForm(){
+    const setVal = (id, value)=>{ const el = $(id); if (el) el.value = value; };
+    setVal('#vt-edit-week-start', editableArticleData.week_start);
+    setVal('#vt-edit-title', editableArticleData.title);
+    setVal('#vt-edit-groups', editableArticleData.groups);
+    setVal('#vt-edit-frames', editableArticleData.frames);
+    setVal('#vt-edit-reads', editableArticleData.reads);
+    setVal('#vt-edit-para-lengths', editableArticleData.para_lengths.join('\n'));
+    setVal('#vt-edit-images', editableArticleData.images);
+  }
+
+  function syncDataBindings(){
+    const payload = getEditablePayload();
+    const jsonHost = $('#vt-json-preview');
+    if (jsonHost) jsonHost.textContent = JSON.stringify(payload, null, 2);
+    window.__VT_EXPORT_DATA = payload;
+    window.__VT_EDITABLE_ARTICLE_DATA = {...editableArticleData};
+    renderLockedResult();
+    renderPreviewSections();
+  }
+
+  function handleEditableFieldChange(field, rawValue){
+    if (field === 'para_lengths') {
+      editableArticleData.para_lengths = String(rawValue || '')
+        .split(/[\n,]+/)
+        .map((v)=> Number(v.trim()) || 0)
+        .filter((n)=> n > 0);
+    } else {
+      editableArticleData[field] = String(rawValue || '');
+    }
+    syncDataBindings();
+  }
+
+  function copyEditableJson(){
+    const json = JSON.stringify(getEditablePayload(), null, 2);
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(json).catch(()=>{});
+    }
+  }
+
+  function downloadEditableJson(){
+    const blob = new Blob([JSON.stringify(getEditablePayload(), null, 2)], {type:'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'study-analyzer-resultat.json';
+    a.click();
+    setTimeout(()=> URL.revokeObjectURL(a.href), 400);
+  }
+
+  function hydrateDetectedFromCurrentItem(){
+    const current = getCurrentItem();
+    if (!current) return;
+    const data = {
+      week_start: current.week_start || '',
+      title: current.title || current.name || '',
+      groups: current.groups || '',
+      frames: Array.isArray(current.frames) ? current.frames : '',
+      reads: Array.isArray(current.reads) ? current.reads : '',
+      para_lengths: Array.isArray(current.para_lengths) ? current.para_lengths : (Array.isArray(current.words) ? current.words : []),
+      images: Array.isArray(current.images) ? current.images : ''
+    };
+    setDetectedAndEditableData(data);
+  }
+
   /* ========== professional layout shell ========== */
   function ensureProfessionalLayout(){
     document.body.classList.add('vt-app');
@@ -462,6 +623,37 @@
     main.className = 'vt-main';
     main.innerHTML = `
       <section class="vt-col" id="vt-col-main">
+        <article class="vt-card" id="vt-card-analyze">
+          <h2>Lim inn artikkeltekst her</h2>
+          <p>Lim inn hele artikkelen eller rådata som skal analyseres.</p>
+          <div class="vt-section-spacer vt-field">
+            <textarea id="vt-article-text" class="vt-textarea" placeholder="Lim inn tekst som skal analyseres..."></textarea>
+          </div>
+          <div class="vt-actions">
+            <button id="vt-analyze-btn" class="vt-btn vt-btn--primary">Analyser tekst</button>
+          </div>
+        </article>
+        <article class="vt-card" id="vt-card-adjust">
+          <h2>Juster analyseresultat</h2>
+          <p>Overstyr feltene under. JSON-preview, beregning og eksport oppdateres live.</p>
+          <div class="vt-section-spacer vt-grid-2">
+            <div class="vt-field"><label for="vt-edit-week-start">week_start</label><input id="vt-edit-week-start" class="vt-input" type="date"></div>
+            <div class="vt-field"><label for="vt-edit-title">title</label><input id="vt-edit-title" class="vt-input" type="text"></div>
+            <div class="vt-field"><label for="vt-edit-groups">groups</label><input id="vt-edit-groups" class="vt-input" type="text"></div>
+            <div class="vt-field"><label for="vt-edit-frames">frames</label><input id="vt-edit-frames" class="vt-input" type="text"></div>
+            <div class="vt-field"><label for="vt-edit-reads">reads</label><input id="vt-edit-reads" class="vt-input" type="text"></div>
+            <div class="vt-field"><label for="vt-edit-images">images</label><input id="vt-edit-images" class="vt-input" type="text"></div>
+          </div>
+          <div class="vt-field">
+            <label for="vt-edit-para-lengths">para_lengths (ett tall per linje)</label>
+            <textarea id="vt-edit-para-lengths" class="vt-textarea" style="min-height:110px"></textarea>
+          </div>
+          <div class="vt-actions">
+            <button id="vt-copy-json" class="vt-btn">Kopier JSON</button>
+            <button id="vt-export-json" class="vt-btn">Eksporter JSON</button>
+          </div>
+          <pre id="vt-json-preview" class="vt-json-preview" aria-live="polite"></pre>
+        </article>
         <article class="vt-card" id="vt-card-timeline">
           <h2>Tidslinje</h2>
           <p>Visuell gjennomgang av avsnitt og markeringer.</p>
@@ -514,7 +706,11 @@
     includeImages: true,
     conservativeTime: false,
     rounding: 'nearest',
-    detailMode: 'basic'
+    detailMode: 'basic',
+    wordsPerMinute: 220,
+    minutesPerReadMarker: 0.45,
+    minutesPerFrameMarker: 0.35,
+    minutesPerImage: 0.3
   };
 
   let draftPreviewSettings = {...defaultPreviewSettings};
@@ -527,30 +723,38 @@
     return Math.round(value);
   }
 
+  function getPreviewInputs(){
+    const wordCount = editableArticleData.para_lengths.reduce((sum, n)=> sum + (Number(n) || 0), 0);
+    const paragraphCount = editableArticleData.para_lengths.length;
+    const selectedReads = editableArticleData.reads
+      ? editableArticleData.reads.split(',').map((s)=> s.trim()).filter(Boolean).length
+      : 0;
+    const selectedFrames = editableArticleData.frames
+      ? editableArticleData.frames.split(',').map((s)=> s.trim()).filter(Boolean).length
+      : 0;
+    const imageCount = editableArticleData.images
+      ? editableArticleData.images.split(',').map((s)=> s.trim()).filter(Boolean).length
+      : 0;
+    return {paragraphCount, wordCount, selectedReads, selectedFrames, imageCount};
+  }
+
   // Central breakdown builder to avoid duplicated logic in UI.
   function buildBreakdown(settings = lockedPreviewSettings){
-    const inputs = {
-      paragraphCount: getParaCount(),
-      wordCount: getWordCount(),
-      selectedReads: getReadSet().size,
-      selectedFrames: getFrameSet().size,
-      imageCount: getImageSet().size,
-      toggles: {...settings}
-    };
+    const inputs = {...getPreviewInputs(), toggles: {...settings}};
 
     const assumptions = {
-      wordsPerMinute: settings.conservativeTime ? 180 : 220,
-      minutesPerReadMarker: 0.45,
-      minutesPerFrameMarker: 0.35,
-      minutesPerImage: 0.3,
+      wordsPerMinute: Number(settings.wordsPerMinute) || 220,
+      minutesPerReadMarker: Number(settings.minutesPerReadMarker) || 0,
+      minutesPerFrameMarker: Number(settings.minutesPerFrameMarker) || 0,
+      minutesPerImage: Number(settings.minutesPerImage) || 0,
       roundingStrategy: settings.rounding,
       detailMode: settings.detailMode,
       rationale: settings.conservativeTime
-        ? 'Konservativ modus bruker lavere lesehastighet for tryggere estimat.'
-        : 'Standard modus bruker normal lesehastighet for balansert estimat.'
+        ? 'Konservativ modus er aktivert.'
+        : 'Standard modus er aktivert.'
     };
 
-    const readingMinutes = inputs.wordCount / assumptions.wordsPerMinute;
+    const readingMinutes = assumptions.wordsPerMinute > 0 ? (inputs.wordCount / assumptions.wordsPerMinute) : 0;
     const readMarkerMinutes = inputs.selectedReads * assumptions.minutesPerReadMarker;
     const frameMarkerMinutes = inputs.selectedFrames * assumptions.minutesPerFrameMarker;
     const imageMinutes = settings.includeImages ? inputs.imageCount * assumptions.minutesPerImage : 0;
@@ -589,7 +793,7 @@
         ${buildKvRows([
           ['Totalt estimat', bd.result.formatted],
           ['Rundet tid', `${bd.result.roundedMinutes} min`],
-          ['Modus', lockedPreviewSettings.conservativeTime ? 'Konservativ' : 'Standard'],
+          ['Avrunding', lockedPreviewSettings.rounding],
           ['Bilder', lockedPreviewSettings.includeImages ? 'Inkludert' : 'Ekskludert']
         ])}
       </div>
@@ -599,7 +803,7 @@
     `;
 
     const badge = $('#vt-lock-badge');
-    if (badge) badge.textContent = `Låst: ${bd.result.formatted} (${lockedPreviewSettings.conservativeTime ? 'konservativ' : 'standard'})`;
+    if (badge) badge.textContent = `Låst: ${bd.result.formatted} (${lockedPreviewSettings.rounding})`;
 
     const inlineBtn = $('#vt-open-preview-inline');
     if (inlineBtn) inlineBtn.addEventListener('click', openPreviewModal);
@@ -618,18 +822,23 @@
         </div>
         <p class="vt-subtitle" style="margin-top:8px">Se inputs, antakelser og mellomregning før du låser inn resultatet.</p>
 
-        <div class="vt-section-spacer vt-row" style="flex-wrap:wrap; align-items:center;">
+        <div class="vt-section-spacer vt-row" style="flex-wrap:wrap; align-items:flex-end;">
           <div class="vt-tabs" id="vt-detail-tabs">
             <button class="vt-tab is-active" data-mode="basic">Basic</button>
             <button class="vt-tab" data-mode="advanced">Advanced</button>
           </div>
           <div>
             <label class="vt-chip-toggle"><input type="checkbox" id="vt-toggle-images" checked><span>Inkluder bilder</span></label>
-            <label class="vt-chip-toggle"><input type="checkbox" id="vt-toggle-conservative"><span>Konservativ tid</span></label>
+          </div>
+          <div class="vt-grid-2" style="min-width:360px;">
+            <div class="vt-field"><label for="vt-words-per-minute" class="vt-subtitle">Ord per minutt</label><input id="vt-words-per-minute" class="vt-input" type="number" min="1" step="1"></div>
+            <div class="vt-field"><label for="vt-minutes-per-read" class="vt-subtitle">Tid per les-skriftsted</label><input id="vt-minutes-per-read" class="vt-input" type="number" min="0" step="0.05"></div>
+            <div class="vt-field"><label for="vt-minutes-per-frame" class="vt-subtitle">Tid per ramme</label><input id="vt-minutes-per-frame" class="vt-input" type="number" min="0" step="0.05"></div>
+            <div class="vt-field"><label for="vt-minutes-per-image" class="vt-subtitle">Tid per bilde</label><input id="vt-minutes-per-image" class="vt-input" type="number" min="0" step="0.05"></div>
           </div>
           <div>
-            <label for="vt-rounding" class="vt-subtitle">Avrunding</label>
-            <select id="vt-rounding" class="vt-select vt-btn">
+            <label for="vt-rounding" class="vt-subtitle">Avrundingsmetode</label>
+            <select id="vt-rounding" class="vt-select">
               <option value="nearest">Nærmeste minutt</option>
               <option value="up">Rund opp</option>
               <option value="down">Rund ned</option>
@@ -664,14 +873,18 @@
       draftPreviewSettings.includeImages = !!e.target.checked;
       renderPreviewSections();
     });
-    $('#vt-toggle-conservative')?.addEventListener('change', (e)=>{
-      draftPreviewSettings.conservativeTime = !!e.target.checked;
-      renderPreviewSections();
-    });
     $('#vt-rounding')?.addEventListener('change', (e)=>{
       draftPreviewSettings.rounding = e.target.value;
       renderPreviewSections();
     });
+
+    [['#vt-words-per-minute','wordsPerMinute'],['#vt-minutes-per-read','minutesPerReadMarker'],['#vt-minutes-per-frame','minutesPerFrameMarker'],['#vt-minutes-per-image','minutesPerImage']]
+      .forEach(([sel, key])=>{
+        $(sel)?.addEventListener('input', (e)=>{
+          draftPreviewSettings[key] = Number(e.target.value) || 0;
+          renderPreviewSections();
+        });
+      });
 
     $$('#vt-detail-tabs .vt-tab').forEach((tab)=>{
       tab.addEventListener('click', ()=>{
@@ -741,8 +954,11 @@
 
   function syncPreviewControls(){
     $('#vt-toggle-images').checked = !!draftPreviewSettings.includeImages;
-    $('#vt-toggle-conservative').checked = !!draftPreviewSettings.conservativeTime;
     $('#vt-rounding').value = draftPreviewSettings.rounding;
+    $('#vt-words-per-minute').value = String(draftPreviewSettings.wordsPerMinute);
+    $('#vt-minutes-per-read').value = String(draftPreviewSettings.minutesPerReadMarker);
+    $('#vt-minutes-per-frame').value = String(draftPreviewSettings.minutesPerFrameMarker);
+    $('#vt-minutes-per-image').value = String(draftPreviewSettings.minutesPerImage);
     $$('#vt-detail-tabs .vt-tab').forEach((tab)=>{
       tab.classList.toggle('is-active', tab.getAttribute('data-mode') === draftPreviewSettings.detailMode);
     });
@@ -804,6 +1020,43 @@
       btn.__vtBound = true;
       btn.addEventListener('click', openPreviewModal);
     }
+
+    const analyzeBtn = $('#vt-analyze-btn');
+    if (analyzeBtn && !analyzeBtn.__vtBound){
+      analyzeBtn.__vtBound = true;
+      analyzeBtn.addEventListener('click', ()=>{
+        const parsed = parseArticleText($('#vt-article-text')?.value || '');
+        setDetectedAndEditableData(parsed);
+      });
+    }
+
+    const editableMap = [
+      ['#vt-edit-week-start', 'week_start'],
+      ['#vt-edit-title', 'title'],
+      ['#vt-edit-groups', 'groups'],
+      ['#vt-edit-frames', 'frames'],
+      ['#vt-edit-reads', 'reads'],
+      ['#vt-edit-para-lengths', 'para_lengths'],
+      ['#vt-edit-images', 'images']
+    ];
+    editableMap.forEach(([sel, field])=>{
+      const el = $(sel);
+      if (!el || el.__vtBound) return;
+      el.__vtBound = true;
+      el.addEventListener('input', (e)=> handleEditableFieldChange(field, e.target.value));
+    });
+
+    const copyBtn = $('#vt-copy-json');
+    if (copyBtn && !copyBtn.__vtBound){
+      copyBtn.__vtBound = true;
+      copyBtn.addEventListener('click', copyEditableJson);
+    }
+
+    const exportBtn = $('#vt-export-json');
+    if (exportBtn && !exportBtn.__vtBound){
+      exportBtn.__vtBound = true;
+      exportBtn.addEventListener('click', downloadEditableJson);
+    }
   }
 
   /* ========== keep message stable ========== */
@@ -825,6 +1078,7 @@
   function applyAll(){
     ensureProfessionalLayout();
     ensurePreviewModal();
+    if (!editableArticleData.title && !editableArticleData.para_lengths.length) hydrateDetectedFromCurrentItem();
     bindUIActions();
     applyTwoToneWithGroups();
     layoutPins();
