@@ -471,8 +471,29 @@
     images: ''
   };
 
+  const monthMap = {
+    JANUAR: 0, FEBRUAR: 1, MARS: 2, APRIL: 3, MAI: 4, JUNI: 5,
+    JULI: 6, AUGUST: 7, SEPTEMBER: 8, OKTOBER: 9, NOVEMBER: 10, DESEMBER: 11
+  };
+
   let detectedArticleData = {...modelDefaults};
   let editableArticleData = {...modelDefaults};
+  let parseDebugInfo = null;
+  let jsonPreviewMode = 'pretty';
+
+  function parseNumberList(value){
+    const result = [];
+    String(value || '').split(',').map((v)=> v.trim()).filter(Boolean).forEach((token)=>{
+      const m = token.match(/^(\d+)(?:\s*[\-–]\s*(\d+))?$/);
+      if (!m) return;
+      const a = Number(m[1]);
+      const b = m[2] ? Number(m[2]) : a;
+      const min = Math.min(a, b);
+      const max = Math.max(a, b);
+      for (let i=min; i<=max; i+=1) result.push(i);
+    });
+    return [...new Set(result)].sort((a,b)=> a-b);
+  }
 
   function normalizeArticleData(data = {}){
     return {
@@ -482,7 +503,7 @@
       frames: Array.isArray(data.frames) ? data.frames.join(', ') : String(data.frames || ''),
       reads: Array.isArray(data.reads) ? data.reads.join(', ') : String(data.reads || ''),
       para_lengths: Array.isArray(data.para_lengths)
-        ? data.para_lengths.map((n)=> Number(n) || 0)
+        ? data.para_lengths.map((n)=> Number(n) || 0).filter((n)=> n > 0)
         : (typeof data.para_lengths === 'string'
             ? data.para_lengths.split(/[\n,]+/).map((v)=> Number(v.trim()) || 0).filter((n)=> n > 0)
             : []),
@@ -495,28 +516,241 @@
       week_start: editableArticleData.week_start,
       title: editableArticleData.title,
       groups: editableArticleData.groups,
-      frames: editableArticleData.frames,
-      reads: editableArticleData.reads,
+      frames: parseNumberList(editableArticleData.frames),
+      reads: parseNumberList(editableArticleData.reads),
       para_lengths: editableArticleData.para_lengths,
-      images: editableArticleData.images
+      images: parseNumberList(editableArticleData.images)
     };
   }
 
-  function parseArticleText(rawText){
-    const text = String(rawText || '').trim();
-    const paragraphs = text ? text.split(/\n\s*\n+/).map((p)=> p.replace(/\s+/g, ' ').trim()).filter(Boolean) : [];
-    const paraLengths = paragraphs.map((p)=> p.split(/\s+/).filter(Boolean).length);
-    const title = paragraphs[0] ? paragraphs[0].slice(0, 120) : '';
-    const isoWeek = new Date().toISOString().slice(0, 10);
-    const groups = paraLengths.length > 1 ? `1-${paraLengths.length}` : (paraLengths.length === 1 ? '1' : '');
+  function detectWeekHeader(lines){
+    return lines.find((line)=> /\d{1,2}\.\s*[–-]\s*\d{1,2}\.\s*[A-ZÆØÅ]+\s+\d{4}/.test(line)) || '';
+  }
+
+  function parseWeekStart(weekHeader){
+    const m = String(weekHeader || '').toUpperCase().match(/(\d{1,2})\.\s*[–-]\s*(\d{1,2})\.\s*([A-ZÆØÅ]+)\s+(\d{4})/);
+    if (!m) return '';
+    const day = Number(m[1]);
+    const monthName = m[3];
+    const year = Number(m[4]);
+    const monthIndex = monthMap[monthName];
+    if (!Number.isInteger(monthIndex)) return '';
+    const d = new Date(Date.UTC(year, monthIndex, day));
+    return d.toISOString().slice(0, 10);
+  }
+
+  function splitArticleIntoLogicalBlocks(rawText){
+    const rawLines = String(rawText || '').split(/\r?\n/);
+    const lines = rawLines.map((l)=> l.trim()).filter(Boolean);
+    const blocks = [];
+    rawLines.forEach((line, idx)=>{
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      blocks.push({startLine: idx + 1, endLine: idx + 1, lines: [trimmed], text: trimmed});
+    });
+    return {lines, blocks};
+  }
+
+  function detectTitle(blocks){
+    const skip = /^(\d{1,2}\.\s*[–-]\s*\d{1,2}\.\s*[A-ZÆØÅ]+\s+\d{4}|SANG\b.*|FOKUS\b.*|«.*»\s*[–-]|Svaret ditt)$/i;
+    for (const b of blocks){
+      const line = b.lines[0] || '';
+      if (skip.test(line)) continue;
+      if (/^\d+(?:\s*,\s*\d+)*(?:[.,]|\s)/.test(line)) continue;
+      if (line === line.toUpperCase() && line.length > 10) continue;
+      return line;
+    }
+    return '';
+  }
+
+  function removeNonContentBlocks(blocks){
+    const ignored = [];
+    const kept = [];
+    let ignoreNextAsFocusDetail = false;
+    const reasons = [
+      {key:'week_header', re:/^\d{1,2}\.\s*[–-]\s*\d{1,2}\.\s*[A-ZÆØÅ]+\s+\d{4}$/i},
+      {key:'song', re:/^SANG\b/i},
+      {key:'motto', re:/^«.+»\s*[–-]\s*[A-Z0-9\s:.,–-]+$/i},
+      {key:'focus', re:/^FOKUS$/i},
+      {key:'answer_slot', re:/^Svaret ditt$/i},
+      {key:'section_heading', re:/^[A-ZÆØÅ0-9 ?!.,:–-]{8,}$/},
+      {key:'image_caption', re:/^(Bildeserie:|Bilde:|Bildetekst:)/i},
+      {key:'parenthesis_note', re:/^\([^)]*\)$/}
+    ];
+    blocks.forEach((b)=>{
+      const firstLine = b.lines[0] || '';
+      if (ignoreNextAsFocusDetail){
+        ignored.push({line: b.startLine, text: b.lines.join(' | '), reason: 'focus_description'});
+        ignoreNextAsFocusDetail = false;
+        return;
+      }
+      const isIgnored = reasons.find(({re})=> b.lines.every((line)=> re.test(line)) || re.test(firstLine));
+      if (isIgnored){
+        ignored.push({line: b.startLine, text: b.lines.join(' | '), reason: isIgnored.key});
+        if (isIgnored.key === 'focus') ignoreNextAsFocusDetail = true;
+      } else {
+        kept.push(b);
+      }
+    });
+    return {kept, ignored};
+  }
+
+  function detectParagraphHeaders(blocks){
+    const paragraphs = [];
+    const combinedHeaders = [];
+    blocks.forEach((b)=>{
+      const headerLine = b.lines[0] || '';
+      const m = headerLine.match(/^(\d+(?:\s*,\s*\d+)*)(?:[.,])?\s*(.*)$/);
+      if (!m) return;
+      const numbers = m[1].split(',').map((v)=> Number(v.trim())).filter(Boolean);
+      const rest = [m[2], ...b.lines.slice(1)].join(' ').trim();
+      if (numbers.length > 1) combinedHeaders.push(numbers);
+      paragraphs.push({numbers, text: rest, line: b.startLine});
+    });
+    return {paragraphs, combinedHeaders};
+  }
+
+  function buildGroupsFromCombinedHeaders(combinedHeaders){
+    const tokens = [];
+    combinedHeaders.forEach((group)=>{
+      if (!group.length) return;
+      const sorted = [...group].sort((a,b)=> a-b);
+      const consecutive = sorted.every((n, idx)=> idx === 0 || n === sorted[idx-1] + 1);
+      tokens.push(consecutive && sorted.length > 1 ? `${sorted[0]}-${sorted[sorted.length-1]}` : sorted.join('-'));
+    });
+    return [...new Set(tokens)].join(',');
+  }
+
+  function detectReadReferences(paragraphItems){
+    const reads = [];
+    const reasons = [];
+    paragraphItems.forEach((p)=>{
+      if (!/\bles\b/i.test(p.text) || !/\d+:\d+/.test(p.text)) return;
+      const targetParagraph = Array.isArray(p.combinedNumbers) && p.combinedNumbers.length > 1
+        ? Math.max(...p.combinedNumbers)
+        : p.number;
+      reads.push(targetParagraph);
+      reasons.push({paragraph: targetParagraph, evidence: p.text.match(/([^.!?]*\bles\b[^.!?]*\d+:\d+[^.!?]*)/i)?.[1]?.trim() || p.text.slice(0, 160)});
+    });
+    return {reads: [...new Set(reads)].sort((a,b)=> a-b), reasons};
+  }
+
+  function detectImageReferences(rawText){
+    const images = new Set();
+    const text = String(rawText || '');
+    const patterns = [
+      /Se avsnittene\s+(\d+)\s+og\s+(\d+)/gi,
+      /avsnitt(?:ene)?\s+(\d+)\s*[–-]\s*(\d+)/gi
+    ];
+    patterns.forEach((re)=>{
+      let m;
+      while ((m = re.exec(text)) !== null){
+        const a = Number(m[1]);
+        const b = Number(m[2]);
+        if (!a || !b) continue;
+        for (let i=Math.min(a,b); i<=Math.max(a,b); i+=1) images.add(i);
+      }
+    });
+    return [...images].sort((a,b)=> a-b);
+  }
+
+  function splitCombinedParagraphText(text, count){
+    if (count <= 1) return [text];
+    const normalized = text.trim();
+    const qIndex = normalized.indexOf('?');
+    if (qIndex > -1){
+      const qPart = normalized.slice(0, qIndex + 1).trim();
+      const ansPart = normalized.slice(qIndex + 1).trim();
+      if (ansPart) return [qPart, ansPart, ...Array(Math.max(0, count - 2)).fill(ansPart)].slice(0, count);
+    }
+    const words = normalized.split(/\s+/).filter(Boolean);
+    const size = Math.max(1, Math.floor(words.length / count));
+    const parts = [];
+    for (let i=0; i<count; i+=1){
+      const start = i * size;
+      const end = i === count - 1 ? words.length : (i + 1) * size;
+      parts.push(words.slice(start, end).join(' '));
+    }
+    return parts;
+  }
+
+  function buildParagraphLengths(paragraphs){
+    const paragraphItems = [];
+    paragraphs.forEach((p)=>{
+      const parts = splitCombinedParagraphText(p.text, p.numbers.length);
+      p.numbers.forEach((num, idx)=>{
+        const clean = String(parts[idx] || p.text || '').replace(/\bSvaret ditt\b/gi, '').trim();
+        const words = clean.split(/\s+/).filter(Boolean);
+        paragraphItems.push({number: num, text: clean, length: words.length, sourceLine: p.line, combinedNumbers: p.numbers});
+      });
+    });
+    const ordered = paragraphItems.sort((a,b)=> a.number - b.number);
+    return {paragraphItems: ordered, para_lengths: ordered.map((p)=> p.length)};
+  }
+
+  function buildArticleItem(parts){
     return normalizeArticleData({
-      week_start: isoWeek,
+      week_start: parts.week_start,
+      title: parts.title,
+      groups: parts.groups,
+      frames: parts.frames,
+      reads: parts.reads,
+      para_lengths: parts.para_lengths,
+      images: parts.images
+    });
+  }
+
+  function parseArticleText(rawText){
+    const {lines, blocks} = splitArticleIntoLogicalBlocks(rawText);
+    const weekHeader = detectWeekHeader(lines);
+    const week_start = parseWeekStart(weekHeader);
+    const title = detectTitle(blocks);
+    const {kept, ignored} = removeNonContentBlocks(blocks);
+    const {paragraphs, combinedHeaders} = detectParagraphHeaders(kept);
+    const groups = buildGroupsFromCombinedHeaders(combinedHeaders);
+    const {paragraphItems, para_lengths} = buildParagraphLengths(paragraphs);
+    const readResult = detectReadReferences(paragraphItems);
+    const images = detectImageReferences(rawText);
+    const frames = [];
+
+    parseDebugInfo = {
+      weekHeader,
+      titleLine: title,
+      ignored,
+      paragraphBlocks: paragraphItems.map((p)=> ({paragraph: p.number, sourceLine: p.sourceLine, preview: p.text.slice(0, 120)})),
+      readReasons: readResult.reasons,
+      groups
+    };
+
+    return buildArticleItem({
+      week_start,
       title,
       groups,
-      frames: '',
-      reads: '',
-      para_lengths: paraLengths,
-      images: ''
+      frames,
+      reads: readResult.reads,
+      para_lengths,
+      images
+    });
+  }
+
+  function renderParseDebug(){
+    const host = $('#vt-parse-debug');
+    if (!host) return;
+    host.textContent = parseDebugInfo ? JSON.stringify(parseDebugInfo, null, 2) : 'Ingen parser-debug enda.';
+  }
+
+  function syncJsonPreview(){
+    const payload = getEditablePayload();
+    const jsonHost = $('#vt-json-preview');
+    if (!jsonHost) return;
+    jsonHost.textContent = jsonPreviewMode === 'compact'
+      ? JSON.stringify(payload)
+      : JSON.stringify(payload, null, 2);
+  }
+
+  function syncJsonModeTabs(){
+    $$('#vt-json-mode-tabs .vt-tab').forEach((tab)=>{
+      tab.classList.toggle('is-active', tab.getAttribute('data-json-mode') === jsonPreviewMode);
     });
   }
 
@@ -542,8 +776,9 @@
 
   function syncDataBindings(){
     const payload = getEditablePayload();
-    const jsonHost = $('#vt-json-preview');
-    if (jsonHost) jsonHost.textContent = JSON.stringify(payload, null, 2);
+    syncJsonPreview();
+    syncJsonModeTabs();
+    renderParseDebug();
     window.__VT_EXPORT_DATA = payload;
     window.__VT_EDITABLE_ARTICLE_DATA = {...editableArticleData};
     renderLockedResult();
@@ -563,14 +798,17 @@
   }
 
   function copyEditableJson(){
-    const json = JSON.stringify(getEditablePayload(), null, 2);
+    const payload = getEditablePayload();
+    const json = jsonPreviewMode === 'compact' ? JSON.stringify(payload) : JSON.stringify(payload, null, 2);
     if (navigator.clipboard?.writeText) {
       navigator.clipboard.writeText(json).catch(()=>{});
     }
   }
 
   function downloadEditableJson(){
-    const blob = new Blob([JSON.stringify(getEditablePayload(), null, 2)], {type:'application/json'});
+    const payload = getEditablePayload();
+    const json = jsonPreviewMode === 'compact' ? JSON.stringify(payload) : JSON.stringify(payload, null, 2);
+    const blob = new Blob([json], {type:'application/json'});
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = 'study-analyzer-resultat.json';
@@ -578,6 +816,41 @@
     setTimeout(()=> URL.revokeObjectURL(a.href), 400);
   }
 
+  function runParserExampleTest(){
+    const sample = `9.–15. MARS 2026
+SANG 32
+Hva kan vi gjøre for å overvinne negative følelser?
+FOKUS
+Hvordan vi kan takle negative følelser.
+1, 2. Hvorfor hadde Paulus negative følelser? (Les Romerne 7:21–24.) Svaret ditt
+3. Hvordan ble Paulus hjulpet?
+4. Vanlig avsnitt.
+5. Vanlig avsnitt.
+6. Vanlig avsnitt.
+7. (Les Romerne 7:18, 19.)
+8. Vanlig avsnitt.
+Bildeserie: Se avsnittene 9 og 10.
+9. Vanlig avsnitt.
+10. Les Romerne 8:1.
+11. Vanlig avsnitt.
+12. Vanlig avsnitt.
+13, 14. Kombinert avsnitt.
+15. Vanlig avsnitt.
+16. Vanlig avsnitt.
+17. Vanlig avsnitt.
+18. Vanlig avsnitt.
+19. Vanlig avsnitt.
+20. Vanlig avsnitt.`;
+    const parsed = parseArticleText(sample);
+    const payload = {
+      week_start: parsed.week_start,
+      title: parsed.title,
+      reads: parseNumberList(parsed.reads),
+      frames: parseNumberList(parsed.frames),
+      paraCount: parsed.para_lengths.length
+    };
+    return payload;
+  }
   function hydrateDetectedFromCurrentItem(){
     const current = getCurrentItem();
     if (!current) return;
@@ -651,8 +924,14 @@
           <div class="vt-actions">
             <button id="vt-copy-json" class="vt-btn">Kopier JSON</button>
             <button id="vt-export-json" class="vt-btn">Eksporter JSON</button>
+            <div class="vt-tabs" id="vt-json-mode-tabs" aria-label="JSON-format">
+              <button class="vt-tab is-active" data-json-mode="pretty">Pretty</button>
+              <button class="vt-tab" data-json-mode="compact">Compact</button>
+            </div>
           </div>
           <pre id="vt-json-preview" class="vt-json-preview" aria-live="polite"></pre>
+          <h3 style="margin:12px 0 6px">Advanced parse preview</h3>
+          <pre id="vt-parse-debug" class="vt-json-preview" aria-live="polite"></pre>
         </article>
         <article class="vt-card" id="vt-card-timeline">
           <h2>Tidslinje</h2>
@@ -1046,6 +1325,16 @@
       el.addEventListener('input', (e)=> handleEditableFieldChange(field, e.target.value));
     });
 
+
+    $$('#vt-json-mode-tabs .vt-tab').forEach((tab)=>{
+      if (tab.__vtBound) return;
+      tab.__vtBound = true;
+      tab.addEventListener('click', ()=>{
+        jsonPreviewMode = tab.getAttribute('data-json-mode') || 'pretty';
+        syncDataBindings();
+      });
+    });
+
     const copyBtn = $('#vt-copy-json');
     if (copyBtn && !copyBtn.__vtBound){
       copyBtn.__vtBound = true;
@@ -1075,6 +1364,8 @@
   }
 
   /* ========== apply & re-apply on timeline changes ========== */
+  window.__VT_RUN_PARSER_EXAMPLE_TEST = runParserExampleTest;
+
   function applyAll(){
     ensureProfessionalLayout();
     ensurePreviewModal();
