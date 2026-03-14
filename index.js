@@ -541,73 +541,60 @@
 
   function splitArticleIntoLogicalBlocks(rawText){
     const rawLines = String(rawText || '').split(/\r?\n/);
-    const lines = rawLines.map((l)=> l.trim()).filter(Boolean);
-    const blocks = [];
-    rawLines.forEach((line, idx)=>{
-      const trimmed = line.trim();
-      if (!trimmed) return;
-      blocks.push({startLine: idx + 1, endLine: idx + 1, lines: [trimmed], text: trimmed});
-    });
-    return {lines, blocks};
+    return rawLines
+      .map((line, idx)=> ({line: idx + 1, text: String(line || '').trim()}))
+      .filter((entry)=> entry.text);
   }
 
-  function detectTitle(blocks){
+  function detectTitle(lines){
     const skip = /^(\d{1,2}\.\s*[–-]\s*\d{1,2}\.\s*[A-ZÆØÅ]+\s+\d{4}|SANG\b.*|FOKUS\b.*|«.*»\s*[–-]|Svaret ditt)$/i;
-    for (const b of blocks){
-      const line = b.lines[0] || '';
+    for (const entry of lines){
+      const line = entry.text || '';
       if (skip.test(line)) continue;
       if (/^\d+(?:\s*,\s*\d+)*(?:[.,]|\s)/.test(line)) continue;
-      if (line === line.toUpperCase() && line.length > 10) continue;
+      if (/^[A-ZÆØÅ0-9 ?!.,:–-]{8,}$/.test(line)) continue;
       return line;
     }
     return '';
   }
 
-  function removeNonContentBlocks(blocks){
-    const ignored = [];
-    const kept = [];
-    let ignoreNextAsFocusDetail = false;
-    const reasons = [
-      {key:'week_header', re:/^\d{1,2}\.\s*[–-]\s*\d{1,2}\.\s*[A-ZÆØÅ]+\s+\d{4}$/i},
-      {key:'song', re:/^SANG\b/i},
-      {key:'motto', re:/^«.+»\s*[–-]\s*[A-Z0-9\s:.,–-]+$/i},
-      {key:'focus', re:/^FOKUS$/i},
-      {key:'answer_slot', re:/^Svaret ditt$/i},
-      {key:'section_heading', re:/^[A-ZÆØÅ0-9 ?!.,:–-]{8,}$/},
-      {key:'image_caption', re:/^(Bildeserie:|Bilde:|Bildetekst:)/i},
-      {key:'parenthesis_note', re:/^\([^)]*\)$/}
-    ];
-    blocks.forEach((b)=>{
-      const firstLine = b.lines[0] || '';
-      if (ignoreNextAsFocusDetail){
-        ignored.push({line: b.startLine, text: b.lines.join(' | '), reason: 'focus_description'});
-        ignoreNextAsFocusDetail = false;
-        return;
-      }
-      const isIgnored = reasons.find(({re})=> b.lines.every((line)=> re.test(line)) || re.test(firstLine));
-      if (isIgnored){
-        ignored.push({line: b.startLine, text: b.lines.join(' | '), reason: isIgnored.key});
-        if (isIgnored.key === 'focus') ignoreNextAsFocusDetail = true;
-      } else {
-        kept.push(b);
-      }
-    });
-    return {kept, ignored};
+  function stripFrontMatter(lines){
+    return [...lines];
   }
 
-  function detectParagraphHeaders(blocks){
-    const paragraphs = [];
-    const combinedHeaders = [];
-    blocks.forEach((b)=>{
-      const headerLine = b.lines[0] || '';
-      const m = headerLine.match(/^(\d+(?:\s*,\s*\d+)*)(?:[.,])?\s*(.*)$/);
-      if (!m) return;
-      const numbers = m[1].split(',').map((v)=> Number(v.trim())).filter(Boolean);
-      const rest = [m[2], ...b.lines.slice(1)].join(' ').trim();
-      if (numbers.length > 1) combinedHeaders.push(numbers);
-      paragraphs.push({numbers, text: rest, line: b.startLine});
+  function classifyLines(lines, title){
+    const classified = [];
+    let focusTextNext = false;
+    lines.forEach((entry)=>{
+      const text = entry.text;
+      let type = 'ignore';
+      if (/^\d{1,2}\.\s*[–-]\s*\d{1,2}\.\s*[A-ZÆØÅ]+\s+\d{4}$/i.test(text)) type = 'week_header';
+      else if (/^SANG\b/i.test(text)) type = 'song_line';
+      else if (/^«.+»\s*[–-]\s*[A-Z0-9\s:.,–-]+$/i.test(text)) type = 'theme_scripture';
+      else if (text === title) type = 'title';
+      else if (/^FOKUS$/i.test(text)) { type = 'focus_header'; focusTextNext = true; }
+      else if (focusTextNext) { type = 'focus_text'; focusTextNext = false; }
+      else if (/^Svaret ditt$/i.test(text)) type = 'answer_marker';
+      else if (/^(Bildeserie:|Bilde:|Bildetekst:)/i.test(text) || /\(Se avsnittene?\s+\d+\s+og\s+\d+\)/i.test(text)) type = 'image_caption';
+      else if (/^[A-ZÆØÅ0-9 ?!.,:–-]{8,}$/.test(text)) type = 'section_header';
+      else if (/^\d+(?:\s*,\s*\d+)\./.test(text)) type = 'question_header';
+      else if (/^\d+\.\s+.*\?/.test(text)) type = 'question_header';
+      else if (/^\d+\.\s*\(?(?:[A-ZÆØÅ].*)?\bLes\b.+\d+[:.\d–-]/i.test(text) && !/^\d+\s+/.test(text)) type = 'question_header';
+      else if (/^\d+\s+/.test(text)) type = 'body_paragraph';
+      else if (/^\d+\.\s+/.test(text)) type = 'question_header';
+      classified.push({...entry, type});
     });
-    return {paragraphs, combinedHeaders};
+    return classified;
+  }
+
+  function detectQuestionHeaders(classified){
+    return classified
+      .filter((entry)=> entry.type === 'question_header')
+      .map((entry)=>{
+        const m = entry.text.match(/^(\d+(?:\s*,\s*\d+)*)\./);
+        const numbers = m ? m[1].split(',').map((v)=> Number(v.trim())).filter(Boolean) : [];
+        return {...entry, numbers};
+      });
   }
 
   function buildGroupsFromCombinedHeaders(combinedHeaders){
@@ -621,16 +608,20 @@
     return [...new Set(tokens)].join(',');
   }
 
-  function detectReadReferences(paragraphItems){
+  function detectReadReferences(paragraphItems, questionHeaders){
     const reads = [];
     const reasons = [];
+    questionHeaders.forEach((q)=>{
+      if (!/\bles\b/i.test(q.text) || !/\d+[:.]\d+/.test(q.text)) return;
+      const target = q.numbers.length > 1 ? Math.max(...q.numbers) : q.numbers[0];
+      if (!target) return;
+      reads.push(target);
+      reasons.push({paragraph: target, source: 'question_header', evidence: q.text});
+    });
     paragraphItems.forEach((p)=>{
-      if (!/\bles\b/i.test(p.text) || !/\d+:\d+/.test(p.text)) return;
-      const targetParagraph = Array.isArray(p.combinedNumbers) && p.combinedNumbers.length > 1
-        ? Math.max(...p.combinedNumbers)
-        : p.number;
-      reads.push(targetParagraph);
-      reasons.push({paragraph: targetParagraph, evidence: p.text.match(/([^.!?]*\bles\b[^.!?]*\d+:\d+[^.!?]*)/i)?.[1]?.trim() || p.text.slice(0, 160)});
+      if (!/\bles\b/i.test(p.text) || !/\d+[:.]\d+/.test(p.text)) return;
+      reads.push(p.number);
+      reasons.push({paragraph: p.number, source: 'body_paragraph', evidence: p.text.match(/([^.!?]*\bles\b[^.!?]*\d+[:.]\d+[^.!?]*)/i)?.[1]?.trim() || p.text.slice(0, 160)});
     });
     return {reads: [...new Set(reads)].sort((a,b)=> a-b), reasons};
   }
@@ -674,17 +665,63 @@
     return parts;
   }
 
-  function buildParagraphLengths(paragraphs){
-    const paragraphItems = [];
-    paragraphs.forEach((p)=>{
-      const parts = splitCombinedParagraphText(p.text, p.numbers.length);
-      p.numbers.forEach((num, idx)=>{
-        const clean = String(parts[idx] || p.text || '').replace(/\bSvaret ditt\b/gi, '').trim();
-        const words = clean.split(/\s+/).filter(Boolean);
-        paragraphItems.push({number: num, text: clean, length: words.length, sourceLine: p.line, combinedNumbers: p.numbers});
-      });
+  function groupQuestionHeaderWithAnswerBlocks(classified, questionHeaders){
+    const questionMap = new Map(questionHeaders.map((q)=> [q.line, q]));
+    const mappings = [];
+    let active = null;
+    let expectedIdx = 0;
+    classified.forEach((entry)=>{
+      if (entry.type === 'question_header'){
+        active = questionMap.get(entry.line) || null;
+        expectedIdx = 0;
+        return;
+      }
+      if (!active) return;
+      if (entry.type === 'body_paragraph'){
+        const explicit = entry.text.match(/^(\d+)\s+/);
+        const inferredNumber = active.numbers[expectedIdx];
+        mappings.push({
+          line: entry.line,
+          bodyText: entry.text,
+          headerLine: active.line,
+          headerText: active.text,
+          explicitNumber: explicit ? Number(explicit[1]) : null,
+          inferredNumber: inferredNumber || null
+        });
+        expectedIdx += 1;
+      }
     });
-    const ordered = paragraphItems.sort((a,b)=> a.number - b.number);
+    return mappings;
+  }
+
+  function buildLogicalParagraphs(classified, answerMappings){
+    const mappingByLine = new Map(answerMappings.map((m)=> [m.line, m]));
+    const paragraphItems = classified
+      .filter((entry)=> entry.type === 'body_paragraph')
+      .map((entry)=>{
+        const m = entry.text.match(/^(\d+)\s+(.+)$/);
+        const map = mappingByLine.get(entry.line);
+        const number = m ? Number(m[1]) : (map?.inferredNumber || 0);
+        const clean = (m ? m[2] : entry.text).replace(/\bSvaret ditt\b/gi, '').trim();
+        const words = clean.split(/\s+/).filter(Boolean);
+        return {
+          number,
+          text: clean,
+          length: words.length,
+          sourceLine: entry.line,
+          mappedFromQuestion: map ? {headerLine: map.headerLine, headerText: map.headerText} : null
+        };
+      })
+      .filter((p)=> p.number > 0)
+      .sort((a,b)=> a.number - b.number);
+
+    const ordered = [];
+    const seen = new Set();
+    paragraphItems.forEach((p)=>{
+      if (seen.has(p.number)) return;
+      seen.add(p.number);
+      ordered.push(p);
+    });
     return {paragraphItems: ordered, para_lengths: ordered.map((p)=> p.length)};
   }
 
@@ -701,24 +738,32 @@
   }
 
   function parseArticleText(rawText){
-    const {lines, blocks} = splitArticleIntoLogicalBlocks(rawText);
-    const weekHeader = detectWeekHeader(lines);
+    const lines = splitArticleIntoLogicalBlocks(rawText);
+    const weekHeader = detectWeekHeader(lines.map((entry)=> entry.text));
     const week_start = parseWeekStart(weekHeader);
-    const title = detectTitle(blocks);
-    const {kept, ignored} = removeNonContentBlocks(blocks);
-    const {paragraphs, combinedHeaders} = detectParagraphHeaders(kept);
+    const title = detectTitle(lines);
+    const strippedLines = stripFrontMatter(lines);
+    const classified = classifyLines(strippedLines, title);
+    const questionHeaders = detectQuestionHeaders(classified);
+    const answerMappings = groupQuestionHeaderWithAnswerBlocks(classified, questionHeaders);
+    const combinedHeaders = questionHeaders.map((q)=> q.numbers).filter((nums)=> nums.length > 1);
     const groups = buildGroupsFromCombinedHeaders(combinedHeaders);
-    const {paragraphItems, para_lengths} = buildParagraphLengths(paragraphs);
-    const readResult = detectReadReferences(paragraphItems);
-    const images = detectImageReferences(rawText);
+    const {paragraphItems, para_lengths} = buildLogicalParagraphs(classified, answerMappings);
+    const readResult = detectReadReferences(paragraphItems, questionHeaders);
+    const images = detectImageReferences(classified.filter((entry)=> entry.type === 'image_caption').map((entry)=> entry.text).join('\n'));
     const frames = [];
+    const ignored = classified.filter((entry)=> !['question_header', 'body_paragraph'].includes(entry.type));
 
     parseDebugInfo = {
       weekHeader,
       titleLine: title,
-      ignored,
+      questionHeaders: questionHeaders.map((q)=> ({line: q.line, text: q.text, numbers: q.numbers})),
+      bodyParagraphs: paragraphItems.map((p)=> ({line: p.sourceLine, paragraph: p.number, preview: p.text.slice(0, 140)})),
+      ignored: ignored.map((entry)=> ({line: entry.line, text: entry.text, reason: entry.type})),
+      paragraphMappings: answerMappings,
       paragraphBlocks: paragraphItems.map((p)=> ({paragraph: p.number, sourceLine: p.sourceLine, preview: p.text.slice(0, 120)})),
       readReasons: readResult.reasons,
+      groupReasons: combinedHeaders.map((nums)=> ({numbers: nums, group: buildGroupsFromCombinedHeaders([nums])})),
       groups
     };
 
