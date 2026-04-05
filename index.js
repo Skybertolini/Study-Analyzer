@@ -639,6 +639,8 @@
   function classifyLines(lines, title){
     const classified = [];
     let focusTextNext = false;
+    let pendingImplicitBody = false;
+    let implicitAnchorHeaderLine = null;
     lines.forEach((entry)=>{
       const text = entry.text;
       let type = 'ignore';
@@ -648,7 +650,10 @@
       else if (text === title) type = 'title';
       else if (/^FOKUS$/i.test(text)) { type = 'focus_header'; focusTextNext = true; }
       else if (focusTextNext) { type = 'focus_text'; focusTextNext = false; }
-      else if (/^Svaret ditt$/i.test(text)) type = 'answer_marker';
+      else if (/^Svaret ditt$/i.test(text)) {
+        type = 'answer_marker';
+        pendingImplicitBody = Boolean(implicitAnchorHeaderLine);
+      }
       else if (/^(Bildeserie:|Bilde:|Bildetekst:)/i.test(text) || /\(Se avsnittene?\s+\d+\s+og\s+\d+\)/i.test(text)) type = 'image_caption';
       else if (/^[A-ZÆØÅ0-9 ?!.,:–-]{8,}$/.test(text)) type = 'section_header';
       else if (/^\d+(?:\s*,\s*\d+)\./.test(text)) type = 'question_header';
@@ -656,6 +661,16 @@
       else if (/^\d+\.\s*\(?(?:[A-ZÆØÅ].*)?\bLes\b.+\d+[:.\d–-]/i.test(text) && !/^\d+\s+/.test(text)) type = 'question_header';
       else if (/^\d+\s+/.test(text)) type = 'body_paragraph';
       else if (/^\d+\.\s+/.test(text)) type = 'question_header';
+      else if (pendingImplicitBody) type = 'implicit_body_paragraph';
+
+      if (type === 'question_header'){
+        implicitAnchorHeaderLine = entry.line;
+        pendingImplicitBody = false;
+      } else if (type === 'body_paragraph' || type === 'implicit_body_paragraph'){
+        pendingImplicitBody = false;
+      } else if (!['answer_marker', 'ignore'].includes(type)){
+        pendingImplicitBody = false;
+      }
       classified.push({...entry, type});
     });
     return classified;
@@ -767,7 +782,7 @@
         return;
       }
       if (!active) return;
-      if (entry.type === 'body_paragraph'){
+      if (['body_paragraph', 'implicit_body_paragraph'].includes(entry.type)){
         const explicit = entry.text.match(/^(\d+)\s+/);
         const inferredNumber = active.numbers[expectedIdx];
         mappings.push({
@@ -777,7 +792,8 @@
           headerText: active.text,
           explicitNumber: explicit ? Number(explicit[1]) : null,
           inferredNumber: inferredNumber || null,
-          sourceType: 'body_paragraph'
+          sourceType: entry.type,
+          implicitAfterAnswerMarker: entry.type === 'implicit_body_paragraph'
         });
         expectedIdx += 1;
       }
@@ -791,7 +807,7 @@
       .filter((m)=> m.sourceType === 'reclassified_dot_body')
       .map((m)=> ({line: m.line, text: m.bodyText, type: 'body_paragraph'}));
     const bodyCandidates = [
-      ...classified.filter((entry)=> entry.type === 'body_paragraph'),
+      ...classified.filter((entry)=> ['body_paragraph', 'implicit_body_paragraph'].includes(entry.type)),
       ...syntheticBodyEntries
     ];
 
@@ -807,6 +823,7 @@
           text: clean,
           length: words.length,
           sourceLine: entry.line,
+          sourceType: entry.type,
           mappedFromQuestion: map ? {headerLine: map.headerLine, headerText: map.headerText} : null
         };
       })
@@ -834,6 +851,7 @@
       paragraph: p.number,
       sourceLine: p.sourceLine,
       preview: p.text.slice(0, 120),
+      sourceType: p.sourceType,
       included: !dropLog.some((d)=> d.paragraph === p.number && d.sourceLine === p.sourceLine),
       reason: dropLog.find((d)=> d.paragraph === p.number && d.sourceLine === p.sourceLine)?.reason || 'included'
     }));
@@ -872,13 +890,23 @@
     const readResult = detectReadReferences(paragraphItems, questionHeaders);
     const images = detectImageReferences(classified.filter((entry)=> entry.type === 'image_caption').map((entry)=> entry.text).join('\n'));
     const frames = [];
-    const ignored = classified.filter((entry)=> !['question_header', 'body_paragraph'].includes(entry.type));
+    const ignored = classified.filter((entry)=> !['question_header', 'body_paragraph', 'implicit_body_paragraph'].includes(entry.type));
 
     parseDebugInfo = {
       weekHeader,
       titleLine: title,
       questionHeaders: questionHeaders.map((q)=> ({line: q.line, text: q.text, numbers: q.numbers})),
-      bodyParagraphs: paragraphItems.map((p)=> ({line: p.sourceLine, paragraph: p.number, preview: p.text.slice(0, 140)})),
+      bodyParagraphs: paragraphItems.map((p)=> ({line: p.sourceLine, paragraph: p.number, sourceType: p.sourceType, preview: p.text.slice(0, 140)})),
+      implicitBodyParagraphs: answerMappings
+        .filter((m)=> m.sourceType === 'implicit_body_paragraph')
+        .map((m)=> ({
+          line: m.line,
+          classification: `line ${m.line} classified as implicit_body_paragraph`,
+          mappedToParagraph: m.inferredNumber || null,
+          mapping: `mapped to paragraph ${m.inferredNumber || '?'} from header [${(questionHeaders.find((q)=> q.line === m.headerLine)?.numbers || []).join(',')}]`,
+          cameAfter: 'question_header + answer_marker',
+          preview: m.bodyText.slice(0, 140)
+        })),
       ignored: ignored.map((entry)=> ({line: entry.line, text: entry.text, reason: entry.type})),
       paragraphMappings: answerMappings,
       paragraphBlocks: paragraphItems.map((p)=> ({paragraph: p.number, sourceLine: p.sourceLine, preview: p.text.slice(0, 120)})),
