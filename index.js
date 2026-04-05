@@ -746,6 +746,22 @@
     let expectedIdx = 0;
     classified.forEach((entry)=>{
       if (entry.type === 'question_header'){
+        const explicitDot = entry.text.match(/^(\d+)\.\s+(.+)$/);
+        const inferredNumber = active?.numbers?.[expectedIdx];
+        const looksLikeQuestion = /\?$/.test(entry.text) || /\bSvaret ditt\b/i.test(entry.text) || /\bLes\b.+\d+[:.]\d+/i.test(entry.text);
+        if (active && explicitDot && inferredNumber && Number(explicitDot[1]) === inferredNumber && !looksLikeQuestion){
+          mappings.push({
+            line: entry.line,
+            bodyText: `${explicitDot[1]} ${explicitDot[2]}`.trim(),
+            headerLine: active.line,
+            headerText: active.text,
+            explicitNumber: Number(explicitDot[1]),
+            inferredNumber: inferredNumber || null,
+            sourceType: 'reclassified_dot_body'
+          });
+          expectedIdx += 1;
+          return;
+        }
         active = questionMap.get(entry.line) || null;
         expectedIdx = 0;
         return;
@@ -760,7 +776,8 @@
           headerLine: active.line,
           headerText: active.text,
           explicitNumber: explicit ? Number(explicit[1]) : null,
-          inferredNumber: inferredNumber || null
+          inferredNumber: inferredNumber || null,
+          sourceType: 'body_paragraph'
         });
         expectedIdx += 1;
       }
@@ -770,10 +787,17 @@
 
   function buildLogicalParagraphs(classified, answerMappings){
     const mappingByLine = new Map(answerMappings.map((m)=> [m.line, m]));
-    const paragraphItems = classified
-      .filter((entry)=> entry.type === 'body_paragraph')
+    const syntheticBodyEntries = answerMappings
+      .filter((m)=> m.sourceType === 'reclassified_dot_body')
+      .map((m)=> ({line: m.line, text: m.bodyText, type: 'body_paragraph'}));
+    const bodyCandidates = [
+      ...classified.filter((entry)=> entry.type === 'body_paragraph'),
+      ...syntheticBodyEntries
+    ];
+
+    const paragraphItems = bodyCandidates
       .map((entry)=>{
-        const m = entry.text.match(/^(\d+)\s+(.+)$/);
+        const m = entry.text.match(/^(\d+)\.?\s+(.+)$/);
         const map = mappingByLine.get(entry.line);
         const number = m ? Number(m[1]) : (map?.inferredNumber || 0);
         const clean = (m ? m[2] : entry.text).replace(/\bSvaret ditt\b/gi, '').trim();
@@ -791,12 +815,34 @@
 
     const ordered = [];
     const seen = new Set();
+    const dropLog = [];
     paragraphItems.forEach((p)=>{
-      if (seen.has(p.number)) return;
+      if (seen.has(p.number)){
+        dropLog.push({
+          paragraph: p.number,
+          sourceLine: p.sourceLine,
+          preview: p.text.slice(0, 120),
+          included: false,
+          reason: 'duplicate_paragraph_number'
+        });
+        return;
+      }
       seen.add(p.number);
       ordered.push(p);
     });
-    return {paragraphItems: ordered, para_lengths: ordered.map((p)=> p.length)};
+    const debugRows = paragraphItems.map((p)=> ({
+      paragraph: p.number,
+      sourceLine: p.sourceLine,
+      preview: p.text.slice(0, 120),
+      included: !dropLog.some((d)=> d.paragraph === p.number && d.sourceLine === p.sourceLine),
+      reason: dropLog.find((d)=> d.paragraph === p.number && d.sourceLine === p.sourceLine)?.reason || 'included'
+    }));
+    return {
+      paragraphItems: ordered,
+      para_lengths: ordered.map((p)=> p.length),
+      debugRows,
+      droppedRows: dropLog
+    };
   }
 
   function buildArticleItem(parts){
@@ -822,7 +868,7 @@
     const answerMappings = groupQuestionHeaderWithAnswerBlocks(classified, questionHeaders);
     const combinedHeaders = questionHeaders.map((q)=> q.numbers).filter((nums)=> nums.length > 1);
     const groups = buildGroupsFromCombinedHeaders(combinedHeaders);
-    const {paragraphItems, para_lengths} = buildLogicalParagraphs(classified, answerMappings);
+    const {paragraphItems, para_lengths, debugRows, droppedRows} = buildLogicalParagraphs(classified, answerMappings);
     const readResult = detectReadReferences(paragraphItems, questionHeaders);
     const images = detectImageReferences(classified.filter((entry)=> entry.type === 'image_caption').map((entry)=> entry.text).join('\n'));
     const frames = [];
@@ -836,6 +882,9 @@
       ignored: ignored.map((entry)=> ({line: entry.line, text: entry.text, reason: entry.type})),
       paragraphMappings: answerMappings,
       paragraphBlocks: paragraphItems.map((p)=> ({paragraph: p.number, sourceLine: p.sourceLine, preview: p.text.slice(0, 120)})),
+      paragraphDebugTable: debugRows,
+      droppedParagraphs: droppedRows,
+      keptParagraphNumbers: paragraphItems.map((p)=> p.number),
       readReasons: readResult.reasons,
       groupReasons: combinedHeaders.map((nums)=> ({numbers: nums, group: buildGroupsFromCombinedHeaders([nums])})),
       groups
