@@ -231,6 +231,70 @@
       .vt-stats{ display:flex; gap:12px; align-items:center; font-size:.95em; opacity:.95; flex-wrap:wrap; margin-top:var(--vt-space-2); }
       .vt-stats b{ font-weight:600 }
       .vt-stats .ic{ width:14px; height:14px; vertical-align:middle; margin-right:6px; }
+      .vt-timeline-empty{
+        margin-top:var(--vt-space-2);
+        color:var(--vt-text-muted);
+        font-style:italic;
+      }
+      .vt-status-hint{
+        margin-top:8px;
+        color:var(--vt-text-muted);
+        font-size:var(--vt-fs-sm);
+      }
+      .vt-date-wrap{ position:relative; }
+      .vt-date-trigger{
+        margin-top:6px;
+        width:100%;
+      }
+      .vt-date-popup{
+        position:absolute;
+        top:calc(100% + 8px);
+        left:0;
+        width:min(320px, 92vw);
+        background:var(--vt-surface);
+        border:1px solid var(--vt-border);
+        border-radius:var(--vt-radius-md);
+        box-shadow:var(--vt-shadow-md);
+        padding:10px;
+        z-index:35;
+      }
+      .vt-date-popup[hidden]{ display:none; }
+      .vt-date-head{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        margin-bottom:8px;
+      }
+      .vt-date-grid{
+        display:grid;
+        grid-template-columns:repeat(7,1fr);
+        gap:4px;
+      }
+      .vt-date-wd{
+        text-align:center;
+        font-size:var(--vt-fs-xs);
+        color:var(--vt-text-muted);
+        font-weight:700;
+      }
+      .vt-date-cell{
+        border:1px solid transparent;
+        background:transparent;
+        border-radius:8px;
+        min-height:34px;
+        font:inherit;
+        color:inherit;
+        cursor:pointer;
+      }
+      .vt-date-cell:hover{ border-color:var(--vt-border); }
+      .vt-date-cell.is-muted{ opacity:.45; }
+      .vt-date-cell.is-monday{
+        font-weight:600;
+        background:#dbeafe;
+      }
+      .vt-date-cell.is-selected{
+        border-color:var(--vt-primary);
+        box-shadow:inset 0 0 0 1px var(--vt-primary);
+      }
     `;
     document.head.appendChild(style);
   })();
@@ -262,35 +326,21 @@
   function hasActiveArticleData(){
     return !!(
       editableArticleData.para_lengths.length ||
-      editableArticleData.reads ||
-      editableArticleData.frames ||
-      editableArticleData.groups ||
-      editableArticleData.images ||
+      String(editableArticleData.reads || '').trim() ||
+      String(editableArticleData.frames || '').trim() ||
+      String(editableArticleData.groups || '').trim() ||
+      String(editableArticleData.images || '').trim() ||
       editableArticleData.title
     );
   }
 
   function getActiveArticleData(){
-    if (hasActiveArticleData()) return getEditablePayload();
-    const it = window.currentItem || window.ITEM || null;
-    if (!it) return null;
-    return {
-      week_start: it.week_start || '',
-      title: it.title || it.name || '',
-      groups: it.groups || '',
-      frames: Array.isArray(it.frames) ? it.frames : [],
-      reads: Array.isArray(it.reads) ? it.reads : [],
-      para_lengths: Array.isArray(it.para_lengths) ? it.para_lengths : (Array.isArray(it.words) ? it.words : []),
-      images: Array.isArray(it.images) ? it.images : []
-    };
+    return getEditablePayload();
   }
 
   function getGroups(){
     const active = getActiveArticleData();
     if (active && typeof active.groups === 'string') return parseGroupsString(active.groups);
-    if (Array.isArray(window.__VT_GROUPS)) return window.__VT_GROUPS;
-    const it = window.currentItem || window.ITEM || null;
-    if (it && typeof it.groups === 'string') return parseGroupsString(it.groups);
     return [];
   }
   function rangeLabel(nums){
@@ -336,45 +386,19 @@
   function getReadSet(){
     const active = getActiveArticleData();
     if (active && Array.isArray(active.reads)) return new Set(active.reads);
-    if (window.__VT_READ_SET2 instanceof Set) return window.__VT_READ_SET2;
-    return window.readSet || new Set();
+    return new Set();
   }
 
   function getFrameSet(){
     const active = getActiveArticleData();
     if (active && Array.isArray(active.frames)) return new Set(active.frames);
-    if (window.__VT_FRAME_SET instanceof Set) return window.__VT_FRAME_SET;
     return new Set();
   }
   const getOrd      = ()=> window.__VT_ORD instanceof Map ? window.__VT_ORD : new Map();
 
-  function expandRefsWithOrder(refs){
-    const set = new Set();
-    if (!Array.isArray(refs)) return {set};
-    refs.forEach(v=>{
-      if (typeof v === 'number' && Number.isFinite(v)){ set.add(v); return; }
-      if (typeof v !== 'string') return;
-      const s = v.trim();
-      let m = s.match(/^(\d+)[\-–](\d+)([abc])?$/i);
-      if (m){ const a=+m[1], b=+m[2]; for(let i=Math.min(a,b); i<=Math.max(a,b); i++) set.add(i); return; }
-      m = s.match(/^(\d+)&(\d+)([abc])?$/i);
-      if (m){ set.add(+m[1]); set.add(+m[2]); return; }
-      m = s.match(/^(\d+)([abc])?$/i);
-      if (m){ set.add(+m[1]); }
-    });
-    return {set};
-  }
-
-  function getCurrentItem(){
-    return window.currentItem || window.ITEM || null;
-  }
-
   function getImageSet(){
     const active = getActiveArticleData();
     if (active && Array.isArray(active.images)) return new Set(active.images);
-    if (window.__VT_IMAGE_SET instanceof Set) return window.__VT_IMAGE_SET;
-    const it = getCurrentItem();
-    if (it && Array.isArray(it.images)) return expandRefsWithOrder(it.images).set;
     return new Set();
   }
 
@@ -385,11 +409,14 @@
     return 0;
   }
 
-  function getParaCount(){
-    const active = getActiveArticleData();
-    if (active && Array.isArray(active.para_lengths)) return active.para_lengths.length;
-    const tl = $('#timeline'); if (tl) return $$('.para-slot', tl).length;
-    return 0;
+  function getArticleStats(article){
+    const safeArticle = article || {};
+    return {
+      paragraphCount: Array.isArray(safeArticle.para_lengths) ? safeArticle.para_lengths.length : 0,
+      readCount: Array.isArray(safeArticle.reads) ? safeArticle.reads.length : 0,
+      frameCount: Array.isArray(safeArticle.frames) ? safeArticle.frames.length : 0,
+      imageCount: Array.isArray(safeArticle.images) ? safeArticle.images.length : 0
+    };
   }
 
   /* ========== messages ========== */
@@ -469,14 +496,19 @@
       <span><img class="ic" src="./img/image-icon.png" alt=""> <b>Bilder:</b> <span id="vt-images">0</span></span>
     `;
     panel.appendChild(div);
+    const hint = document.createElement('p');
+    hint.id = 'vt-status-hint';
+    hint.className = 'vt-status-hint';
+    panel.appendChild(hint);
   }
 
   function updateStats(){
     const panel = findInfoPanel(); if (!panel) return;
-    const paraCount = getParaCount();
-    const readCount = getReadSet().size;
-    const frameCount= getFrameSet().size;
-    const imageCount= getImageSet().size;
+    const stats = getArticleStats(getActiveArticleData());
+    const paraCount = stats.paragraphCount;
+    const readCount = stats.readCount;
+    const frameCount= stats.frameCount;
+    const imageCount= stats.imageCount;
 
     const setText = (sel, text)=>{
       const el = $(sel, panel);
@@ -491,13 +523,16 @@
       setText('#imageCount', String(imageCount));
 
     if (!updated) ensureStats(panel);
-    const stats = {
+    const statTexts = {
       '#vt-paras': String(paraCount),
       '#vt-reads': String(readCount),
       '#vt-frames': String(frameCount),
       '#vt-images': String(imageCount)
     };
-    Object.entries(stats).forEach(([sel, value])=>{ const el = $(sel, panel); if (el) el.textContent = value; });
+    Object.entries(statTexts).forEach(([sel, value])=>{ const el = $(sel, panel); if (el) el.textContent = value; });
+
+    const hint = $('#vt-status-hint', panel);
+    if (hint) hint.textContent = hasActiveArticleData() ? '' : 'Ingen artikkel analysert ennå.';
   }
 
   const modelDefaults = {
@@ -865,8 +900,34 @@
     renderParseDebug();
     window.__VT_EXPORT_DATA = payload;
     window.__VT_EDITABLE_ARTICLE_DATA = {...editableArticleData};
+    renderTimelineFromActiveData(payload);
+    updateStats();
     renderLockedResult();
     renderPreviewSections();
+  }
+
+  function renderTimelineFromActiveData(article = getActiveArticleData()){
+    const timeline = $('#timeline');
+    if (!timeline) return;
+    const count = Array.isArray(article?.para_lengths) ? article.para_lengths.length : 0;
+    const existingSlots = $$('.para-slot', timeline).length;
+    const hasEmpty = !!$('.vt-timeline-empty', timeline);
+    if ((count === 0 && hasEmpty) || (count > 0 && existingSlots === count && !hasEmpty)) return;
+    timeline.innerHTML = '';
+    if (count === 0){
+      timeline.innerHTML = '<p class="vt-timeline-empty">Ingen artikkel analysert ennå.</p>';
+      const msg = $('#message');
+      if (msg) msg.textContent = 'Ingen artikkel analysert ennå.';
+      return;
+    }
+    const fragment = document.createDocumentFragment();
+    for (let i=1; i<=count; i+=1){
+      const slot = document.createElement('div');
+      slot.className = 'para-slot';
+      slot.textContent = String(i);
+      fragment.appendChild(slot);
+    }
+    timeline.appendChild(fragment);
   }
 
   function handleEditableFieldChange(field, rawValue){
@@ -935,21 +996,6 @@ Bildeserie: Se avsnittene 9 og 10.
     };
     return payload;
   }
-  function hydrateDetectedFromCurrentItem(){
-    const current = getCurrentItem();
-    if (!current) return;
-    const data = {
-      week_start: current.week_start || '',
-      title: current.title || current.name || '',
-      groups: current.groups || '',
-      frames: Array.isArray(current.frames) ? current.frames : '',
-      reads: Array.isArray(current.reads) ? current.reads : '',
-      para_lengths: Array.isArray(current.para_lengths) ? current.para_lengths : (Array.isArray(current.words) ? current.words : []),
-      images: Array.isArray(current.images) ? current.images : ''
-    };
-    setDetectedAndEditableData(data);
-  }
-
   /* ========== professional layout shell ========== */
   function ensureProfessionalLayout(){
     document.body.classList.add('vt-app');
@@ -994,7 +1040,12 @@ Bildeserie: Se avsnittene 9 og 10.
           <h2>Juster analyseresultat</h2>
           <p>Overstyr feltene under. JSON-preview, beregning og eksport oppdateres live.</p>
           <div class="vt-section-spacer vt-grid-2">
-            <div class="vt-field"><label for="vt-edit-week-start">week_start</label><input id="vt-edit-week-start" class="vt-input" type="date"></div>
+            <div class="vt-field vt-date-wrap">
+              <label for="vt-edit-week-start">week_start</label>
+              <input id="vt-edit-week-start" class="vt-input" type="text" inputmode="numeric" placeholder="YYYY-MM-DD" readonly>
+              <button id="vt-open-week-picker" class="vt-btn vt-date-trigger" type="button">Velg dato</button>
+              <div id="vt-week-picker" class="vt-date-popup" hidden></div>
+            </div>
             <div class="vt-field"><label for="vt-edit-title">title</label><input id="vt-edit-title" class="vt-input" type="text"></div>
             <div class="vt-field"><label for="vt-edit-groups">groups</label><input id="vt-edit-groups" class="vt-input" type="text"></div>
             <div class="vt-field"><label for="vt-edit-frames">frames</label><input id="vt-edit-frames" class="vt-input" type="text"></div>
@@ -1377,6 +1428,105 @@ Bildeserie: Se avsnittene 9 og 10.
     });
   }
 
+  let weekPickerMonth = null;
+
+  function parseIsoDate(value){
+    const m = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return null;
+    const y = Number(m[1]);
+    const mon = Number(m[2]) - 1;
+    const d = Number(m[3]);
+    const dt = new Date(Date.UTC(y, mon, d));
+    if (Number.isNaN(dt.getTime())) return null;
+    return dt;
+  }
+
+  function toIsoDate(date){
+    return new Date(Date.UTC(
+      date.getUTCFullYear(),
+      date.getUTCMonth(),
+      date.getUTCDate()
+    )).toISOString().slice(0, 10);
+  }
+
+  function snapToMonday(date){
+    const day = date.getUTCDay();
+    const diff = day === 0 ? -6 : 1 - day;
+    const snapped = new Date(date);
+    snapped.setUTCDate(snapped.getUTCDate() + diff);
+    return snapped;
+  }
+
+  function openWeekPicker(){
+    const popup = $('#vt-week-picker');
+    if (!popup) return;
+    const current = parseIsoDate($('#vt-edit-week-start')?.value);
+    weekPickerMonth = current || parseIsoDate(editableArticleData.week_start) || new Date();
+    renderWeekPicker();
+    popup.hidden = false;
+  }
+
+  function closeWeekPicker(){
+    const popup = $('#vt-week-picker');
+    if (popup) popup.hidden = true;
+  }
+
+  function renderWeekPicker(){
+    const popup = $('#vt-week-picker');
+    if (!popup || !weekPickerMonth) return;
+    const selectedRaw = parseIsoDate($('#vt-edit-week-start')?.value);
+    const selected = selectedRaw ? toIsoDate(selectedRaw) : '';
+    const cursor = new Date(Date.UTC(weekPickerMonth.getUTCFullYear(), weekPickerMonth.getUTCMonth(), 1));
+    const first = new Date(cursor);
+    const offset = (first.getUTCDay() + 6) % 7;
+    first.setUTCDate(first.getUTCDate() - offset);
+    const monthLabel = cursor.toLocaleDateString('nb-NO', {month:'long', year:'numeric', timeZone:'UTC'});
+    const days = ['man','tir','ons','tor','fre','lør','søn'];
+    const cells = [];
+    for (let i=0; i<42; i+=1){
+      const d = new Date(first);
+      d.setUTCDate(first.getUTCDate() + i);
+      const inMonth = d.getUTCMonth() === cursor.getUTCMonth();
+      const iso = toIsoDate(d);
+      const monday = d.getUTCDay() === 1;
+      const snapped = toIsoDate(snapToMonday(d));
+      const selectedClass = selected && snapped === selected ? 'is-selected' : '';
+      cells.push(`
+        <button class="vt-date-cell ${inMonth ? '' : 'is-muted'} ${monday ? 'is-monday' : ''} ${selectedClass}" type="button" data-date="${iso}">
+          ${d.getUTCDate()}
+        </button>
+      `);
+    }
+    popup.innerHTML = `
+      <div class="vt-date-head">
+        <button type="button" class="vt-btn vt-btn--ghost" id="vt-week-prev">←</button>
+        <strong style="text-transform:capitalize">${monthLabel}</strong>
+        <button type="button" class="vt-btn vt-btn--ghost" id="vt-week-next">→</button>
+      </div>
+      <div class="vt-date-grid">${days.map((d)=> `<div class="vt-date-wd">${d}</div>`).join('')}</div>
+      <div class="vt-date-grid" style="margin-top:4px">${cells.join('')}</div>
+      <p class="vt-status-hint" style="margin-bottom:0">Uke starter på mandag. Valg snappes til mandag.</p>
+    `;
+    $('#vt-week-prev', popup)?.addEventListener('click', ()=>{
+      weekPickerMonth = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() - 1, 1));
+      renderWeekPicker();
+    });
+    $('#vt-week-next', popup)?.addEventListener('click', ()=>{
+      weekPickerMonth = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 1));
+      renderWeekPicker();
+    });
+    $$('.vt-date-cell', popup).forEach((btn)=>{
+      btn.addEventListener('click', ()=>{
+        const clicked = parseIsoDate(btn.getAttribute('data-date'));
+        if (!clicked) return;
+        const monday = toIsoDate(snapToMonday(clicked));
+        handleEditableFieldChange('week_start', monday);
+        syncEditableForm();
+        closeWeekPicker();
+      });
+    });
+  }
+
   function bindUIActions(){
     const btn = $('#vt-open-preview');
     if (btn && !btn.__vtBound){
@@ -1408,6 +1558,26 @@ Bildeserie: Se avsnittene 9 og 10.
       el.__vtBound = true;
       el.addEventListener('input', (e)=> handleEditableFieldChange(field, e.target.value));
     });
+
+    const openPickerBtn = $('#vt-open-week-picker');
+    if (openPickerBtn && !openPickerBtn.__vtBound){
+      openPickerBtn.__vtBound = true;
+      openPickerBtn.addEventListener('click', ()=>{
+        const popup = $('#vt-week-picker');
+        if (popup?.hidden) openWeekPicker();
+        else closeWeekPicker();
+      });
+    }
+
+    if (!window.__vtWeekPickerDocBound){
+      window.__vtWeekPickerDocBound = true;
+      document.addEventListener('click', (e)=>{
+        const popup = $('#vt-week-picker');
+        const wrap = $('.vt-date-wrap');
+        if (!popup || popup.hidden) return;
+        if (wrap && !wrap.contains(e.target)) closeWeekPicker();
+      });
+    }
 
 
     $$('#vt-json-mode-tabs .vt-tab').forEach((tab)=>{
@@ -1453,8 +1623,8 @@ Bildeserie: Se avsnittene 9 og 10.
   function applyAll(){
     ensureProfessionalLayout();
     ensurePreviewModal();
-    if (!editableArticleData.title && !editableArticleData.para_lengths.length) hydrateDetectedFromCurrentItem();
     bindUIActions();
+    renderTimelineFromActiveData();
     applyTwoToneWithGroups();
     layoutPins();
     bindSlotClicks();

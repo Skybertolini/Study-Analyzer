@@ -9,7 +9,7 @@
     #app-fallback { max-width: 960px; margin: 0 auto; padding: 16px; }
     #timeline { display: grid; grid-template-columns: repeat(auto-fill, minmax(48px, 1fr)); gap: 8px; margin-top: 12px; }
     .para-slot { min-height: 36px; border: 1px solid #cbd5e1; border-radius: 8px; display: flex; align-items: center; justify-content: center; position: relative; }
-    #message, #article-info { margin-top: 12px; padding: 10px; border: 1px solid #e2e8f0; border-radius: 8px; }
+    #message, #article-info { margin-top: 12px; padding: 10px; border: 1px solid #e2e8f0; border-radius: 8px; color: #475569; }
   </style>
 </head>
 <body>
@@ -17,18 +17,11 @@
     <h1>Study Analyzer</h1>
     <p>Denne siden laster UI og preview-panel via JavaScript.</p>
 
-    <div id="timeline" aria-label="Tidslinje">
-      <div class="para-slot">1</div>
-      <div class="para-slot">2</div>
-      <div class="para-slot">3</div>
-      <div class="para-slot">4</div>
-    </div>
+    <div id="timeline" aria-label="Tidslinje"></div>
 
-    <div id="message" aria-live="polite">Velg et avsnitt for å se melding.</div>
+    <div id="message" aria-live="polite">Ingen artikkel analysert ennå.</div>
 
-    <section id="article-info" aria-label="Artikkelinfo">
-      <strong>Status:</strong> Klar
-    </section>
+    <section id="article-info" aria-label="Artikkelinfo">Ingen artikkel analysert ennå.</section>
   </main>
 
   <script src="./index.js"></script>
