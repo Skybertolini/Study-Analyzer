@@ -259,7 +259,35 @@
       return [arr];
     });
   }
+  function hasActiveArticleData(){
+    return !!(
+      editableArticleData.para_lengths.length ||
+      editableArticleData.reads ||
+      editableArticleData.frames ||
+      editableArticleData.groups ||
+      editableArticleData.images ||
+      editableArticleData.title
+    );
+  }
+
+  function getActiveArticleData(){
+    if (hasActiveArticleData()) return getEditablePayload();
+    const it = window.currentItem || window.ITEM || null;
+    if (!it) return null;
+    return {
+      week_start: it.week_start || '',
+      title: it.title || it.name || '',
+      groups: it.groups || '',
+      frames: Array.isArray(it.frames) ? it.frames : [],
+      reads: Array.isArray(it.reads) ? it.reads : [],
+      para_lengths: Array.isArray(it.para_lengths) ? it.para_lengths : (Array.isArray(it.words) ? it.words : []),
+      images: Array.isArray(it.images) ? it.images : []
+    };
+  }
+
   function getGroups(){
+    const active = getActiveArticleData();
+    if (active && typeof active.groups === 'string') return parseGroupsString(active.groups);
     if (Array.isArray(window.__VT_GROUPS)) return window.__VT_GROUPS;
     const it = window.currentItem || window.ITEM || null;
     if (it && typeof it.groups === 'string') return parseGroupsString(it.groups);
@@ -305,8 +333,19 @@
   }
 
   /* ========== base data access (existing + small helpers) ========== */
-  const getReadSet  = ()=> window.__VT_READ_SET2 instanceof Set ? window.__VT_READ_SET2 : (window.readSet || new Set());
-  const getFrameSet = ()=> window.__VT_FRAME_SET instanceof Set ? window.__VT_FRAME_SET : new Set();
+  function getReadSet(){
+    const active = getActiveArticleData();
+    if (active && Array.isArray(active.reads)) return new Set(active.reads);
+    if (window.__VT_READ_SET2 instanceof Set) return window.__VT_READ_SET2;
+    return window.readSet || new Set();
+  }
+
+  function getFrameSet(){
+    const active = getActiveArticleData();
+    if (active && Array.isArray(active.frames)) return new Set(active.frames);
+    if (window.__VT_FRAME_SET instanceof Set) return window.__VT_FRAME_SET;
+    return new Set();
+  }
   const getOrd      = ()=> window.__VT_ORD instanceof Map ? window.__VT_ORD : new Map();
 
   function expandRefsWithOrder(refs){
@@ -331,6 +370,8 @@
   }
 
   function getImageSet(){
+    const active = getActiveArticleData();
+    if (active && Array.isArray(active.images)) return new Set(active.images);
     if (window.__VT_IMAGE_SET instanceof Set) return window.__VT_IMAGE_SET;
     const it = getCurrentItem();
     if (it && Array.isArray(it.images)) return expandRefsWithOrder(it.images).set;
@@ -338,17 +379,15 @@
   }
 
   function getWordCount(){
-    const it = getCurrentItem();
-    if (!it) return 0;
-    if (Array.isArray(it.words)) return it.words.reduce((sum, n)=> sum + (Number(n) || 0), 0);
-    if (Array.isArray(it.para_lengths)) return it.para_lengths.reduce((sum, n)=> sum + (Number(n) || 0), 0);
+    const active = getActiveArticleData();
+    if (!active) return 0;
+    if (Array.isArray(active.para_lengths)) return active.para_lengths.reduce((sum, n)=> sum + (Number(n) || 0), 0);
     return 0;
   }
 
   function getParaCount(){
-    const it = getCurrentItem();
-    if (it && Array.isArray(it.words)) return it.words.length;
-    if (it && Array.isArray(it.para_lengths)) return it.para_lengths.length;
+    const active = getActiveArticleData();
+    if (active && Array.isArray(active.para_lengths)) return active.para_lengths.length;
     const tl = $('#timeline'); if (tl) return $$('.para-slot', tl).length;
     return 0;
   }
