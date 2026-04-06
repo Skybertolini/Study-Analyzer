@@ -1646,6 +1646,14 @@ Bildeserie: Se avsnittene 9 og 10.
       });
     }
 
+    const weekPicker = $('#vt-week-picker');
+    if (weekPicker && !weekPicker.__vtBound){
+      weekPicker.__vtBound = true;
+      weekPicker.addEventListener('click', (e)=>{
+        e.stopPropagation();
+      });
+    }
+
     if (!window.__vtWeekPickerDocBound){
       window.__vtWeekPickerDocBound = true;
       document.addEventListener('click', (e)=>{
