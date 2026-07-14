@@ -308,6 +308,13 @@
         font-size:var(--vt-fs-xs);
         font-weight:700;
       }
+      .vt-inline-breakdown{
+        margin-top:10px;
+        padding:10px;
+        border:1px solid var(--vt-border);
+        border-radius:var(--vt-radius-md);
+        background:var(--vt-surface-muted);
+      }
       .vt-para-editor-head{
         display:flex;
         align-items:flex-end;
@@ -1341,6 +1348,7 @@ Bildeserie: Se avsnittene 9 og 10.
 
   let draftPreviewSettings = {...defaultPreviewSettings};
   let lockedPreviewSettings = {...defaultPreviewSettings};
+  let inlineBreakdownOpen = false;
 
   function roundByRule(value, rule){
     if (!Number.isFinite(value)) return 0;
@@ -1350,8 +1358,9 @@ Bildeserie: Se avsnittene 9 og 10.
   }
 
   function getPreviewInputs(){
-    const wordCount = editableArticleData.para_lengths.reduce((sum, n)=> sum + (Number(n) || 0), 0);
-    const paragraphCount = editableArticleData.para_lengths.length;
+    const paraLengths = Array.isArray(editableArticleData.para_lengths) ? [...editableArticleData.para_lengths] : [];
+    const wordCount = paraLengths.reduce((sum, n)=> sum + (Number(n) || 0), 0);
+    const paragraphCount = paraLengths.length;
     const selectedReads = editableArticleData.reads
       ? editableArticleData.reads.split(',').map((s)=> s.trim()).filter(Boolean).length
       : 0;
@@ -1361,7 +1370,8 @@ Bildeserie: Se avsnittene 9 og 10.
     const imageCount = editableArticleData.images
       ? editableArticleData.images.split(',').map((s)=> s.trim()).filter(Boolean).length
       : 0;
-    return {paragraphCount, wordCount, selectedReads, selectedFrames, imageCount};
+    const groups = parseGroupsString(editableArticleData.groups).length;
+    return {paragraphCount, paraLengths, wordCount, selectedReads, selectedFrames, imageCount, groups};
   }
 
   // Central breakdown builder to avoid duplicated logic in UI.
@@ -1424,15 +1434,42 @@ Bildeserie: Se avsnittene 9 og 10.
         ])}
       </div>
       <div class="vt-section-spacer">
-        <button class="vt-btn vt-btn--ghost" id="vt-open-preview-inline">Forklar beregning</button>
+        <button class="vt-btn vt-btn--ghost" id="vt-toggle-inline-breakdown" type="button" aria-expanded="${inlineBreakdownOpen}" aria-controls="vt-inline-breakdown">Forklar beregning</button>
+        <div id="vt-inline-breakdown" class="vt-inline-breakdown" ${inlineBreakdownOpen ? '' : 'hidden'}></div>
       </div>
     `;
 
     const badge = $('#vt-lock-badge');
     if (badge) badge.textContent = `Låst: ${bd.result.formatted} (${lockedPreviewSettings.rounding})`;
 
-    const inlineBtn = $('#vt-open-preview-inline');
-    if (inlineBtn) inlineBtn.addEventListener('click', openPreviewModal);
+    renderInlineBreakdown(bd);
+
+    const inlineBtn = $('#vt-toggle-inline-breakdown');
+    const inlineBox = $('#vt-inline-breakdown');
+    if (inlineBtn && inlineBox) inlineBtn.addEventListener('click', ()=>{
+      inlineBreakdownOpen = inlineBox.hidden;
+      inlineBox.hidden = !inlineBreakdownOpen;
+      inlineBtn.setAttribute('aria-expanded', String(inlineBreakdownOpen));
+    });
+  }
+
+  function renderInlineBreakdown(bd = buildBreakdown(lockedPreviewSettings)){
+    const host = $('#vt-inline-breakdown');
+    if (!host) return;
+    const rows = [
+      ['Antall avsnitt', nf.format(bd.inputs.paragraphCount)],
+      ['Ord per avsnitt', bd.inputs.paraLengths.length ? bd.inputs.paraLengths.map((n, i)=> `${i + 1}: ${Number(n) || 0}`).join(', ') : 'Ingen'],
+      ['Totalt antall ord', nf.format(bd.inputs.wordCount)],
+      ['Les-skriftsteder', `${nf.format(bd.inputs.selectedReads)} (${bd.steps.find((s)=> s.label === 'Les-skriftsteder')?.formula || ''})`],
+      ['Bilder', `${nf.format(bd.inputs.imageCount)} (${bd.steps.find((s)=> s.label === 'Bilder')?.formula || ''})`],
+      ['Rammer', `${nf.format(bd.inputs.selectedFrames)} (${bd.steps.find((s)=> s.label === 'Rammer')?.formula || ''})`],
+      ['Grupper', nf.format(bd.inputs.groups)],
+      ['Andre tillegg/justeringer', `Lesehastighet ${bd.assumptions.wordsPerMinute} ord/min; ${bd.assumptions.rationale}`],
+      ['Total tid før avrunding', `${nf.format(bd.result.rawTotalMinutes)} min`],
+      ['Avrundingsmetode', bd.assumptions.roundingStrategy],
+      ['Endelig resultat', `${bd.result.formatted} (${bd.result.roundedMinutes} min)`]
+    ];
+    host.innerHTML = `<div class="vt-kv">${buildKvRows(rows)}</div>`;
   }
 
   function ensurePreviewModal(){
@@ -1527,10 +1564,12 @@ Bildeserie: Se avsnittene 9 og 10.
 
     const inputRows = [
       ['Avsnitt', nf.format(bd.inputs.paragraphCount)],
+      ['Ord per avsnitt', bd.inputs.paraLengths.length ? bd.inputs.paraLengths.map((n, i)=> `${i + 1}: ${Number(n) || 0}`).join(', ') : 'Ingen'],
       ['Ord', nf.format(bd.inputs.wordCount)],
       ['Les-skriftsteder', nf.format(bd.inputs.selectedReads)],
       ['Rammer', nf.format(bd.inputs.selectedFrames)],
-      ['Bilder', nf.format(bd.inputs.imageCount)]
+      ['Bilder', nf.format(bd.inputs.imageCount)],
+      ['Grupper', nf.format(bd.inputs.groups)]
     ];
 
     const assumptionsRows = [
@@ -1538,7 +1577,8 @@ Bildeserie: Se avsnittene 9 og 10.
       ['Tid per les-skriftsted', `${bd.assumptions.minutesPerReadMarker} min`],
       ['Tid per ramme', `${bd.assumptions.minutesPerFrameMarker} min`],
       ['Tid per bilde', `${bd.assumptions.minutesPerImage} min`],
-      ['Rasjonale', bd.assumptions.rationale]
+      ['Andre tillegg/justeringer', bd.assumptions.rationale],
+      ['Avrundingsmetode', bd.assumptions.roundingStrategy]
     ];
 
     const stepRows = bd.steps.map((step)=>[
@@ -1575,6 +1615,8 @@ Bildeserie: Se avsnittene 9 og 10.
     }
 
     // Debug logging is limited to preview rendering.
+    renderInlineBreakdown(buildBreakdown(lockedPreviewSettings));
+
     console.debug('[Study-Analyzer] buildBreakdown()', bd);
   }
 
@@ -1789,11 +1831,14 @@ Bildeserie: Se avsnittene 9 og 10.
       const updateSelectionCount = ()=>{
         const start = articleText.selectionStart || 0;
         const end = articleText.selectionEnd || 0;
-        const selected = start === end ? '' : articleText.value.slice(Math.min(start, end), Math.max(start, end));
+        const selected = start === end ? '' : articleText.value.slice(
+          articleText.selectionStart,
+          articleText.selectionEnd
+        );
         const host = $('#vt-selection-count');
         if (host) host.textContent = `Markert tekst: ${countWords(selected)} ord`;
       };
-      ['select', 'mouseup', 'keyup', 'input'].forEach((eventName)=> articleText.addEventListener(eventName, updateSelectionCount));
+      ['select', 'mouseup', 'keyup', 'input', 'touchend'].forEach((eventName)=> articleText.addEventListener(eventName, updateSelectionCount));
       document.addEventListener('selectionchange', ()=>{
         if (document.activeElement === articleText) updateSelectionCount();
       });
@@ -1876,14 +1921,17 @@ Bildeserie: Se avsnittene 9 og 10.
     getEditablePayload,
     handleEditableFieldChange,
     updateParagraphLengthAt,
-    buildBreakdown
+    buildBreakdown,
+    countWords
   };
 
   function applyAll(){
     ensureProfessionalLayout();
     ensurePreviewModal();
     bindUIActions();
-    renderParagraphLengthInputs();
+    const paraGrid = $('#vt-para-length-grid');
+    const activeParaInput = document.activeElement?.classList?.contains('vt-para-length-input');
+    if (paraGrid && !activeParaInput && !paraGrid.children.length) renderParagraphLengthInputs();
     renderTimelineFromActiveData();
     applyTwoToneWithGroups();
     layoutPins();
