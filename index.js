@@ -295,6 +295,56 @@
         border-color:var(--vt-primary);
         box-shadow:inset 0 0 0 1px var(--vt-primary);
       }
+      .vt-selection-count{
+        display:inline-flex;
+        align-items:center;
+        width:max-content;
+        margin-top:8px;
+        padding:4px 9px;
+        border:1px solid var(--vt-border);
+        border-radius:999px;
+        background:var(--vt-surface-muted);
+        color:var(--vt-text-muted);
+        font-size:var(--vt-fs-xs);
+        font-weight:700;
+      }
+      .vt-para-editor-head{
+        display:flex;
+        align-items:flex-end;
+        justify-content:space-between;
+        gap:var(--vt-space-3);
+        flex-wrap:wrap;
+      }
+      .vt-para-count-field{ width:min(220px, 100%); margin-bottom:0; }
+      .vt-para-grid{
+        display:grid;
+        grid-template-columns:repeat(auto-fill, minmax(150px, 1fr));
+        gap:10px;
+        max-height:260px;
+        overflow:auto;
+        padding:10px;
+        border:1px solid var(--vt-border);
+        border-radius:var(--vt-radius-md);
+        background:var(--vt-surface-muted);
+      }
+      .vt-para-item{ display:grid; gap:4px; }
+      .vt-para-item label{
+        color:var(--vt-text-muted);
+        font-size:var(--vt-fs-xs);
+        font-weight:700;
+      }
+      .vt-para-item .vt-input{ background:var(--vt-surface); padding:8px 10px; }
+      .vt-sr-only{
+        position:absolute;
+        width:1px;
+        height:1px;
+        padding:0;
+        margin:-1px;
+        overflow:hidden;
+        clip:rect(0,0,0,0);
+        white-space:nowrap;
+        border:0;
+      }
     `;
     document.head.appendChild(style);
   })();
@@ -577,9 +627,9 @@
       frames: Array.isArray(data.frames) ? data.frames.join(', ') : String(data.frames || ''),
       reads: Array.isArray(data.reads) ? data.reads.join(', ') : String(data.reads || ''),
       para_lengths: Array.isArray(data.para_lengths)
-        ? data.para_lengths.map((n)=> Number(n) || 0).filter((n)=> n > 0)
+        ? data.para_lengths.map((n)=> Math.max(0, Number(n) || 0))
         : (typeof data.para_lengths === 'string'
-            ? data.para_lengths.split(/[\n,]+/).map((v)=> Number(v.trim()) || 0).filter((n)=> n > 0)
+            ? data.para_lengths.split(/[\n,]+/).map((v)=> Math.max(0, Number(v.trim()) || 0)).filter((n)=> n > 0)
             : []),
       images: Array.isArray(data.images) ? data.images.join(', ') : String(data.images || '')
     };
@@ -734,6 +784,10 @@
     return [...images].sort((a,b)=> a-b);
   }
 
+  function countWords(text){
+    return String(text || '').trim().split(/\s+/).filter(Boolean).length;
+  }
+
   function splitCombinedParagraphText(text, count){
     if (count <= 1) return [text];
     const normalized = text.trim();
@@ -817,11 +871,10 @@
         const map = mappingByLine.get(entry.line);
         const number = m ? Number(m[1]) : (map?.inferredNumber || 0);
         const clean = (m ? m[2] : entry.text).replace(/\bSvaret ditt\b/gi, '').trim();
-        const words = clean.split(/\s+/).filter(Boolean);
         return {
           number,
           text: clean,
-          length: words.length,
+          length: countWords(clean),
           sourceLine: entry.line,
           sourceType: entry.type,
           mappedFromQuestion: map ? {headerLine: map.headerLine, headerText: map.headerText} : null
@@ -966,8 +1019,40 @@
     setVal('#vt-edit-groups', editableArticleData.groups);
     setVal('#vt-edit-frames', editableArticleData.frames);
     setVal('#vt-edit-reads', editableArticleData.reads);
+    setVal('#vt-edit-para-count', editableArticleData.para_lengths.length);
     setVal('#vt-edit-para-lengths', editableArticleData.para_lengths.join('\n'));
     setVal('#vt-edit-images', editableArticleData.images);
+    renderParagraphLengthInputs();
+  }
+
+  function resizeParagraphLengths(count){
+    const safeCount = Math.max(1, Number(count) || 1);
+    const current = Array.isArray(editableArticleData.para_lengths) ? [...editableArticleData.para_lengths] : [];
+    while (current.length < safeCount) current.push(0);
+    editableArticleData.para_lengths = current.slice(0, safeCount);
+  }
+
+  function renderParagraphLengthInputs(){
+    const grid = $('#vt-para-length-grid');
+    if (!grid) return;
+    const lengths = Array.isArray(editableArticleData.para_lengths) ? editableArticleData.para_lengths : [];
+    grid.innerHTML = '';
+    if (!lengths.length){
+      grid.innerHTML = '<p class="vt-empty" style="grid-column:1/-1; margin:0">Ingen avsnitt analysert ennå.</p>';
+      return;
+    }
+    const fragment = document.createDocumentFragment();
+    lengths.forEach((length, idx)=>{
+      const wrap = document.createElement('div');
+      wrap.className = 'vt-para-item';
+      const id = `vt-para-length-${idx + 1}`;
+      wrap.innerHTML = `
+        <label for="${id}">Avsnitt ${idx + 1}</label>
+        <input id="${id}" class="vt-input vt-para-length-input" type="number" min="0" step="1" inputmode="numeric" data-index="${idx}" value="${Number(length) || 0}" aria-label="Avsnitt ${idx + 1} – antall ord">
+      `;
+      fragment.appendChild(wrap);
+    });
+    grid.appendChild(fragment);
   }
 
   function syncDataBindings(){
@@ -977,6 +1062,10 @@
     renderParseDebug();
     window.__VT_EXPORT_DATA = payload;
     window.__VT_EDITABLE_ARTICLE_DATA = {...editableArticleData};
+    const paraCountInput = $('#vt-edit-para-count');
+    if (paraCountInput && paraCountInput !== document.activeElement) paraCountInput.value = String(editableArticleData.para_lengths.length);
+    const paraTextarea = $('#vt-edit-para-lengths');
+    if (paraTextarea) paraTextarea.value = editableArticleData.para_lengths.join('\n');
     renderTimelineFromActiveData(payload);
     updateStats();
     renderLockedResult();
@@ -1011,8 +1100,11 @@
     if (field === 'para_lengths') {
       editableArticleData.para_lengths = String(rawValue || '')
         .split(/[\n,]+/)
-        .map((v)=> Number(v.trim()) || 0)
+        .map((v)=> Math.max(0, Number(v.trim()) || 0))
         .filter((n)=> n > 0);
+    } else if (field === 'para_count') {
+      resizeParagraphLengths(rawValue);
+      renderParagraphLengthInputs();
     } else {
       editableArticleData[field] = String(rawValue || '');
     }
@@ -1108,6 +1200,7 @@ Bildeserie: Se avsnittene 9 og 10.
           <p>Lim inn hele artikkelen eller rådata som skal analyseres.</p>
           <div class="vt-section-spacer vt-field">
             <textarea id="vt-article-text" class="vt-textarea" placeholder="Lim inn tekst som skal analyseres..."></textarea>
+            <div id="vt-selection-count" class="vt-selection-count" aria-live="polite">Markert tekst: 0 ord</div>
           </div>
           <div class="vt-actions">
             <button id="vt-analyze-btn" class="vt-btn vt-btn--primary">Analyser tekst</button>
@@ -1130,8 +1223,17 @@ Bildeserie: Se avsnittene 9 og 10.
             <div class="vt-field"><label for="vt-edit-images">images</label><input id="vt-edit-images" class="vt-input" type="text"></div>
           </div>
           <div class="vt-field">
-            <label for="vt-edit-para-lengths">para_lengths (ett tall per linje)</label>
-            <textarea id="vt-edit-para-lengths" class="vt-textarea" style="min-height:110px"></textarea>
+            <div class="vt-para-editor-head">
+              <div>
+                <label for="vt-edit-para-count">Antall avsnitt</label>
+                <p>Rediger ordmengde per avsnitt. Verdiene lagres fortsatt som para_lengths.</p>
+              </div>
+              <div class="vt-field vt-para-count-field">
+                <input id="vt-edit-para-count" class="vt-input" type="number" min="1" step="1" inputmode="numeric">
+              </div>
+            </div>
+            <div id="vt-para-length-grid" class="vt-para-grid" aria-live="polite"></div>
+            <textarea id="vt-edit-para-lengths" class="vt-sr-only" tabindex="-1" aria-hidden="true"></textarea>
           </div>
           <div class="vt-actions">
             <button id="vt-copy-json" class="vt-btn">Kopier JSON</button>
@@ -1626,6 +1728,7 @@ Bildeserie: Se avsnittene 9 og 10.
       ['#vt-edit-groups', 'groups'],
       ['#vt-edit-frames', 'frames'],
       ['#vt-edit-reads', 'reads'],
+      ['#vt-edit-para-count', 'para_count'],
       ['#vt-edit-para-lengths', 'para_lengths'],
       ['#vt-edit-images', 'images']
     ];
@@ -1635,6 +1738,35 @@ Bildeserie: Se avsnittene 9 og 10.
       el.__vtBound = true;
       el.addEventListener('input', (e)=> handleEditableFieldChange(field, e.target.value));
     });
+
+    const paraGrid = $('#vt-para-length-grid');
+    if (paraGrid && !paraGrid.__vtBound){
+      paraGrid.__vtBound = true;
+      paraGrid.addEventListener('input', (e)=>{
+        if (!e.target?.classList?.contains('vt-para-length-input')) return;
+        const idx = Number(e.target.getAttribute('data-index'));
+        if (!Number.isInteger(idx) || idx < 0) return;
+        editableArticleData.para_lengths[idx] = Math.max(0, Number(e.target.value) || 0);
+        syncDataBindings();
+      });
+    }
+
+    const articleText = $('#vt-article-text');
+    if (articleText && !articleText.__vtSelectionBound){
+      articleText.__vtSelectionBound = true;
+      const updateSelectionCount = ()=>{
+        const start = articleText.selectionStart || 0;
+        const end = articleText.selectionEnd || 0;
+        const selected = start === end ? '' : articleText.value.slice(Math.min(start, end), Math.max(start, end));
+        const host = $('#vt-selection-count');
+        if (host) host.textContent = `Markert tekst: ${countWords(selected)} ord`;
+      };
+      ['select', 'mouseup', 'keyup', 'input'].forEach((eventName)=> articleText.addEventListener(eventName, updateSelectionCount));
+      document.addEventListener('selectionchange', ()=>{
+        if (document.activeElement === articleText) updateSelectionCount();
+      });
+      updateSelectionCount();
+    }
 
     const openPickerBtn = $('#vt-open-week-picker');
     if (openPickerBtn && !openPickerBtn.__vtBound){
@@ -1709,6 +1841,7 @@ Bildeserie: Se avsnittene 9 og 10.
     ensureProfessionalLayout();
     ensurePreviewModal();
     bindUIActions();
+    renderParagraphLengthInputs();
     renderTimelineFromActiveData();
     applyTwoToneWithGroups();
     layoutPins();
