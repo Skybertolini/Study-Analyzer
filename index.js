@@ -1248,7 +1248,6 @@ Bildeserie: Se avsnittene 9 og 10.
             <p class="vt-subtitle">Ryddig oversikt over avsnitt, markeringer og beregningsgrunnlag</p>
           </div>
           <div class="vt-row">
-            <span id="vt-lock-badge" class="vt-badge vt-badge--success">Ingen låste innstillinger</span>
             <button id="vt-open-preview" class="vt-btn vt-btn--primary">Forhåndsvis beregning</button>
           </div>
         </div>
@@ -1327,13 +1326,8 @@ Bildeserie: Se avsnittene 9 og 10.
         </article>
       </section>
       <aside class="vt-col" id="vt-col-side">
-        <article class="vt-card" id="vt-card-summary">
-          <h2>Resultat</h2>
-          <p>Låste innstillinger brukes i hovedresultatet under.</p>
-          <div class="vt-section-spacer" id="vt-locked-result" aria-live="polite"></div>
-        </article>
         <article class="vt-card" id="vt-card-info">
-          <h2>Datagrunnlag</h2>
+          <h2>Oversikt</h2>
           <p>Oppsummering av tilgjengelige inputverdier.</p>
           <div class="vt-section-spacer" id="vt-info-slot"></div>
         </article>
@@ -1466,9 +1460,6 @@ Bildeserie: Se avsnittene 9 og 10.
         <div id="vt-inline-breakdown" class="vt-inline-breakdown" ${inlineBreakdownOpen ? '' : 'hidden'}></div>
       </div>
     `;
-
-    const badge = $('#vt-lock-badge');
-    if (badge) badge.textContent = `Låst: ${bd.result.formatted} (${lockedPreviewSettings.rounding})`;
 
     renderInlineBreakdown(bd);
 
