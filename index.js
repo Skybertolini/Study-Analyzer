@@ -662,16 +662,39 @@
   }
 
   const norwegianMonthPattern = Object.keys(norwegianMonthMap).map(escapeRegExp).join('|');
+  const dayPattern = String.raw`(\d{1,2})\.?`;
+  const monthPattern = String.raw`(${norwegianMonthPattern})`;
+  const yearPattern = String.raw`(\d{4})`;
+  const dateSeparatorPattern = String.raw`\s*[–]\s*`;
+  const sameMonthDatePeriodRegex = new RegExp(
+    String.raw`\b${dayPattern}${dateSeparatorPattern}${dayPattern}\s+${monthPattern}\s*,?\s*${yearPattern}\b`,
+    'i'
+  );
+  const differentMonthDatePeriodRegex = new RegExp(
+    String.raw`\b${dayPattern}\s+${monthPattern}(?:\s*,?\s*${yearPattern})?${dateSeparatorPattern}` +
+    String.raw`${dayPattern}\s+${monthPattern}\s*,?\s*${yearPattern}\b`,
+    'i'
+  );
   const datePeriodRegex = new RegExp(
-    String.raw`\b(\d{1,2})\.\s*(${norwegianMonthPattern})(?:\s*,?\s*(\d{4}))?\s*[-–—]\s*` +
-    String.raw`(\d{1,2})\.\s*(${norwegianMonthPattern})\s*,?\s*(\d{4})\b`,
+    `${differentMonthDatePeriodRegex.source}|${sameMonthDatePeriodRegex.source}`,
     'i'
   );
 
+  function normalizeDateSearchText(value){
+    return String(value || '')
+      .replace(/[\u00a0\u202f\u2007]/g, ' ')
+      .replace(/[\u2010\u2011\u2012\u2013\u2014\u2212-]/g, '–')
+      .replace(/[ \t]+/g, ' ');
+  }
+
   function detectWeekHeader(input){
     const source = Array.isArray(input) ? input.slice(0, 8).join('\n') : String(input || '');
-    const head = source.slice(0, 1000);
+    const head = normalizeDateSearchText(source.slice(0, 500));
     return head.match(datePeriodRegex)?.[0] || '';
+  }
+
+  function isWeekHeaderText(value){
+    return datePeriodRegex.test(normalizeDateSearchText(value));
   }
 
   function buildIsoDate(year, month, day){
@@ -683,16 +706,29 @@
   }
 
   function parseWeekStart(weekHeader){
-    const m = String(weekHeader || '').match(datePeriodRegex);
-    if (!m) return '';
-    const firstDay = Number(m[1]);
-    const firstMonth = norwegianMonthMap[m[2].toLowerCase()];
-    const explicitFirstYear = m[3] ? Number(m[3]) : null;
-    const secondMonth = norwegianMonthMap[m[5].toLowerCase()];
-    const secondYear = Number(m[6]);
-    if (!firstMonth || !secondMonth || !secondYear) return '';
-    const firstYear = explicitFirstYear || (firstMonth > secondMonth ? secondYear - 1 : secondYear);
-    return buildIsoDate(firstYear, firstMonth, firstDay);
+    const normalized = normalizeDateSearchText(weekHeader);
+    let m = normalized.match(differentMonthDatePeriodRegex);
+    if (m){
+      const firstDay = Number(m[1]);
+      const firstMonth = norwegianMonthMap[m[2].toLowerCase()];
+      const explicitFirstYear = m[3] ? Number(m[3]) : null;
+      const secondMonth = norwegianMonthMap[m[5].toLowerCase()];
+      const secondYear = Number(m[6]);
+      if (!firstMonth || !secondMonth || !secondYear) return '';
+      const firstYear = explicitFirstYear || (firstMonth > secondMonth ? secondYear - 1 : secondYear);
+      return buildIsoDate(firstYear, firstMonth, firstDay);
+    }
+
+    m = normalized.match(sameMonthDatePeriodRegex);
+    if (m){
+      const firstDay = Number(m[1]);
+      const month = norwegianMonthMap[m[3].toLowerCase()];
+      const year = Number(m[4]);
+      if (!month || !year) return '';
+      return buildIsoDate(year, month, firstDay);
+    }
+
+    return '';
   }
 
   function splitArticleIntoLogicalBlocks(rawText){
@@ -706,7 +742,7 @@
     const skip = /^(SANG\b.*|FOKUS\b.*|«.*»\s*[–-]|Svaret ditt)$/i;
     for (const entry of lines){
       const line = entry.text || '';
-      if (datePeriodRegex.test(line) || skip.test(line)) continue;
+      if (isWeekHeaderText(line) || skip.test(line)) continue;
       if (/^\d+(?:\s*,\s*\d+)*(?:[.,]|\s)/.test(line)) continue;
       if (/^[A-ZÆØÅ0-9 ?!.,:–-]{8,}$/.test(line)) continue;
       return line;
@@ -726,7 +762,7 @@
     lines.forEach((entry)=>{
       const text = entry.text;
       let type = 'ignore';
-      if (datePeriodRegex.test(text)) type = 'week_header';
+      if (isWeekHeaderText(text)) type = 'week_header';
       else if (/^SANG\b/i.test(text)) type = 'song_line';
       else if (/^«.+»\s*[–-]\s*[A-Z0-9\s:.,–-]+$/i.test(text)) type = 'theme_scripture';
       else if (text === title) type = 'title';

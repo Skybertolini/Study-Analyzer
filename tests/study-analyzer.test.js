@@ -71,6 +71,11 @@ vm.createContext(context);
 vm.runInContext(fs.readFileSync('index.js', 'utf8'), context);
 const api = context.window.__VT_TEST_API;
 
+
+assert.strictEqual(api.parseWeekStart('13.–19. JULI 2026'), '2026-07-13');
+assert.strictEqual(api.parseWeekStart('13.-19. juli 2026'), '2026-07-13');
+assert.strictEqual(api.parseWeekStart('13–19 JULI 2026'), '2026-07-13');
+assert.strictEqual(api.parseWeekStart('13. – 19. JULI 2026'), '2026-07-13');
 assert.strictEqual(api.parseWeekStart('27. JULI–2. AUGUST 2026'), '2026-07-27');
 assert.strictEqual(api.parseWeekStart('27. juli - 2. august 2026'), '2026-07-27');
 assert.strictEqual(api.parseWeekStart('27. JULI—2. AUGUST, 2026'), '2026-07-27');
@@ -79,6 +84,17 @@ assert.strictEqual(api.parseWeekStart('29. DESEMBER 2025–4. JANUAR 2026'), '20
 assert.strictEqual(api.parseWeekStart('ingen dato her'), '');
 assert.strictEqual(api.detectWeekHeader('27. JULI–2. AUGUST 2026\nResten'), '27. JULI–2. AUGUST 2026');
 assert.strictEqual(api.parseArticleText('27. JULI–2. AUGUST 2026\n1. Avsnittstekst her').week_start, '2026-07-27');
+
+const pastedArticleWithSameMonthHeader = `13.–19. JULI 2026
+SANG 101
+En faktisk innlimt artikkel
+FOKUS
+Fokus her.
+1. Første avsnitt i artikkelen har tekst.
+2. Andre avsnitt i artikkelen har mer tekst.
+REPETISJONSSPØRSMÅL
+1. Hva husker du?`;
+assert.strictEqual(api.parseArticleText(pastedArticleWithSameMonthHeader).week_start, '2026-07-13');
 
 api.setDetectedAndEditableData({ week_start: '2026-07-27', para_lengths: [74, 12, 8] });
 const before = api.buildBreakdown().inputs.wordCount;
