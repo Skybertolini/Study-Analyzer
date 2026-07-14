@@ -595,10 +595,13 @@
     images: ''
   };
 
-  const monthMap = {
-    JANUAR: 0, FEBRUAR: 1, MARS: 2, APRIL: 3, MAI: 4, JUNI: 5,
-    JULI: 6, AUGUST: 7, SEPTEMBER: 8, OKTOBER: 9, NOVEMBER: 10, DESEMBER: 11
+  const norwegianMonthMap = {
+    januar: 1, februar: 2, mars: 3, april: 4, mai: 5, juni: 6,
+    juli: 7, august: 8, september: 9, oktober: 10, november: 11, desember: 12
   };
+  const monthMap = Object.fromEntries(
+    Object.entries(norwegianMonthMap).map(([name, number])=> [name.toUpperCase(), number - 1])
+  );
 
   let detectedArticleData = {...modelDefaults};
   let editableArticleData = {...modelDefaults};
@@ -647,20 +650,42 @@
     };
   }
 
-  function detectWeekHeader(lines){
-    return lines.find((line)=> /\d{1,2}\.\s*[–-]\s*\d{1,2}\.\s*[A-ZÆØÅ]+\s+\d{4}/.test(line)) || '';
+  function escapeRegExp(value){
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  const norwegianMonthPattern = Object.keys(norwegianMonthMap).map(escapeRegExp).join('|');
+  const datePeriodRegex = new RegExp(
+    String.raw`\b(\d{1,2})\.\s*(${norwegianMonthPattern})(?:\s*,?\s*(\d{4}))?\s*[-–—]\s*` +
+    String.raw`(\d{1,2})\.\s*(${norwegianMonthPattern})\s*,?\s*(\d{4})\b`,
+    'i'
+  );
+
+  function detectWeekHeader(input){
+    const source = Array.isArray(input) ? input.slice(0, 8).join('\n') : String(input || '');
+    const head = source.slice(0, 1000);
+    return head.match(datePeriodRegex)?.[0] || '';
+  }
+
+  function buildIsoDate(year, month, day){
+    if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return '';
+    if (month < 1 || month > 12 || day < 1 || day > 31) return '';
+    const d = new Date(Date.UTC(year, month - 1, day));
+    if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) return '';
+    return d.toISOString().slice(0, 10);
   }
 
   function parseWeekStart(weekHeader){
-    const m = String(weekHeader || '').toUpperCase().match(/(\d{1,2})\.\s*[–-]\s*(\d{1,2})\.\s*([A-ZÆØÅ]+)\s+(\d{4})/);
+    const m = String(weekHeader || '').match(datePeriodRegex);
     if (!m) return '';
-    const day = Number(m[1]);
-    const monthName = m[3];
-    const year = Number(m[4]);
-    const monthIndex = monthMap[monthName];
-    if (!Number.isInteger(monthIndex)) return '';
-    const d = new Date(Date.UTC(year, monthIndex, day));
-    return d.toISOString().slice(0, 10);
+    const firstDay = Number(m[1]);
+    const firstMonth = norwegianMonthMap[m[2].toLowerCase()];
+    const explicitFirstYear = m[3] ? Number(m[3]) : null;
+    const secondMonth = norwegianMonthMap[m[5].toLowerCase()];
+    const secondYear = Number(m[6]);
+    if (!firstMonth || !secondMonth || !secondYear) return '';
+    const firstYear = explicitFirstYear || (firstMonth > secondMonth ? secondYear - 1 : secondYear);
+    return buildIsoDate(firstYear, firstMonth, firstDay);
   }
 
   function splitArticleIntoLogicalBlocks(rawText){
@@ -671,10 +696,10 @@
   }
 
   function detectTitle(lines){
-    const skip = /^(\d{1,2}\.\s*[–-]\s*\d{1,2}\.\s*[A-ZÆØÅ]+\s+\d{4}|SANG\b.*|FOKUS\b.*|«.*»\s*[–-]|Svaret ditt)$/i;
+    const skip = /^(SANG\b.*|FOKUS\b.*|«.*»\s*[–-]|Svaret ditt)$/i;
     for (const entry of lines){
       const line = entry.text || '';
-      if (skip.test(line)) continue;
+      if (datePeriodRegex.test(line) || skip.test(line)) continue;
       if (/^\d+(?:\s*,\s*\d+)*(?:[.,]|\s)/.test(line)) continue;
       if (/^[A-ZÆØÅ0-9 ?!.,:–-]{8,}$/.test(line)) continue;
       return line;
@@ -694,7 +719,7 @@
     lines.forEach((entry)=>{
       const text = entry.text;
       let type = 'ignore';
-      if (/^\d{1,2}\.\s*[–-]\s*\d{1,2}\.\s*[A-ZÆØÅ]+\s+\d{4}$/i.test(text)) type = 'week_header';
+      if (datePeriodRegex.test(text)) type = 'week_header';
       else if (/^SANG\b/i.test(text)) type = 'song_line';
       else if (/^«.+»\s*[–-]\s*[A-Z0-9\s:.,–-]+$/i.test(text)) type = 'theme_scripture';
       else if (text === title) type = 'title';
@@ -930,7 +955,7 @@
 
   function parseArticleText(rawText){
     const lines = splitArticleIntoLogicalBlocks(rawText);
-    const weekHeader = detectWeekHeader(lines.map((entry)=> entry.text));
+    const weekHeader = detectWeekHeader(rawText);
     const week_start = parseWeekStart(weekHeader);
     const title = detectTitle(lines);
     const strippedLines = stripFrontMatter(lines);
@@ -1048,11 +1073,19 @@
       const id = `vt-para-length-${idx + 1}`;
       wrap.innerHTML = `
         <label for="${id}">Avsnitt ${idx + 1}</label>
-        <input id="${id}" class="vt-input vt-para-length-input" type="number" min="0" step="1" inputmode="numeric" data-index="${idx}" value="${Number(length) || 0}" aria-label="Avsnitt ${idx + 1} – antall ord">
+        <input id="${id}" class="vt-input vt-para-length-input" type="number" min="0" step="1" inputmode="numeric" data-index="${idx}" aria-label="Avsnitt ${idx + 1} – antall ord">
       `;
+      const input = $('.vt-para-length-input', wrap);
+      input.value = String(Math.max(0, Number(length) || 0));
       fragment.appendChild(wrap);
     });
     grid.appendChild(fragment);
+  }
+
+  function updateParagraphLengthAt(idx, rawValue){
+    if (!Number.isInteger(idx) || idx < 0) return;
+    editableArticleData.para_lengths[idx] = Math.max(0, Math.trunc(Number(rawValue) || 0));
+    syncDataBindings();
   }
 
   function syncDataBindings(){
@@ -1212,7 +1245,7 @@ Bildeserie: Se avsnittene 9 og 10.
           <div class="vt-section-spacer vt-grid-2">
             <div class="vt-field vt-date-wrap">
               <label for="vt-edit-week-start">week_start</label>
-              <input id="vt-edit-week-start" class="vt-input" type="text" inputmode="numeric" placeholder="YYYY-MM-DD" readonly>
+              <input id="vt-edit-week-start" class="vt-input" type="text" inputmode="numeric" placeholder="YYYY-MM-DD">
               <button id="vt-open-week-picker" class="vt-btn vt-date-trigger" type="button">Velg dato</button>
               <div id="vt-week-picker" class="vt-date-popup" hidden></div>
             </div>
@@ -1746,8 +1779,7 @@ Bildeserie: Se avsnittene 9 og 10.
         if (!e.target?.classList?.contains('vt-para-length-input')) return;
         const idx = Number(e.target.getAttribute('data-index'));
         if (!Number.isInteger(idx) || idx < 0) return;
-        editableArticleData.para_lengths[idx] = Math.max(0, Number(e.target.value) || 0);
-        syncDataBindings();
+        updateParagraphLengthAt(idx, e.target.value);
       });
     }
 
@@ -1836,6 +1868,16 @@ Bildeserie: Se avsnittene 9 og 10.
 
   /* ========== apply & re-apply on timeline changes ========== */
   window.__VT_RUN_PARSER_EXAMPLE_TEST = runParserExampleTest;
+  window.__VT_TEST_API = {
+    parseWeekStart,
+    detectWeekHeader,
+    parseArticleText,
+    setDetectedAndEditableData,
+    getEditablePayload,
+    handleEditableFieldChange,
+    updateParagraphLengthAt,
+    buildBreakdown
+  };
 
   function applyAll(){
     ensureProfessionalLayout();
