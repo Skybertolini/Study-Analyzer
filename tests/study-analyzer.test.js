@@ -89,6 +89,15 @@ assert.strictEqual(JSON.stringify(api.getEditablePayload().para_lengths.slice(0,
 assert.strictEqual(api.buildBreakdown().inputs.wordCount, 168);
 assert.strictEqual(JSON.parse(elements.get('#vt-json-preview').textContent).para_lengths[2], 82);
 
+api.setDetectedAndEditableData({ week_start: '2026-07-27', para_lengths: [131, 12, 8] });
+api.updateParagraphLengthAt(0, '140');
+assert.strictEqual(api.getEditablePayload().para_lengths[0], 140);
+assert.strictEqual(JSON.parse(elements.get('#vt-json-preview').textContent).para_lengths[0], 140);
+assert.strictEqual(api.buildBreakdown().inputs.paraLengths[0], 140);
+assert.strictEqual(api.buildBreakdown().inputs.wordCount, 160);
+assert.strictEqual(api.countWords('Dette er markert tekst'), 4);
+assert.strictEqual(api.countWords(''), 0);
+
 api.handleEditableFieldChange('week_start', '2026-08-03');
 assert.strictEqual(api.getEditablePayload().week_start, '2026-08-03');
 
