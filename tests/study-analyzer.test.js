@@ -97,6 +97,45 @@ assert.strictEqual(api.buildBreakdown().inputs.paraLengths[0], 140);
 assert.strictEqual(api.buildBreakdown().inputs.wordCount, 160);
 assert.strictEqual(api.countWords('Dette er markert tekst'), 4);
 assert.strictEqual(api.countWords(''), 0);
+function makeImplicitFirstArticle(lastNumber, skipNumber) {
+  const lines = [
+    '27. JULI–2. AUGUST 2026',
+    'SANG 1',
+    'Testartikkel',
+    'FOKUS',
+    'Fokus her.',
+    '1, 2. Hva skjedde? Svaret ditt',
+    'DET han sier er viktig for alle nå'
+  ];
+  for (let i = 2; i <= lastNumber; i += 1) {
+    if (i === skipNumber) continue;
+    lines.push(`${i} Dette er tekst for avsnitt ${i}`);
+  }
+  lines.push('REPETISJONSSPØRSMÅL');
+  lines.push('1. Hva lærte vi?');
+  lines.push('SANG 2');
+  return lines.join('\n');
+}
+
+const implicitTo20 = api.parseArticleText(makeImplicitFirstArticle(20));
+assert.strictEqual(implicitTo20.para_lengths.length, 20);
+assert.strictEqual(implicitTo20.para_lengths[0], 8);
+assert.strictEqual(implicitTo20.para_lengths[1], 6);
+assert.strictEqual(JSON.stringify(api.getParseDebugInfo().missingNumbers), JSON.stringify([]));
+
+const implicitTo18 = api.parseArticleText(makeImplicitFirstArticle(18));
+assert.strictEqual(implicitTo18.para_lengths.length, 18);
+assert.strictEqual(implicitTo18.para_lengths[0], 8);
+assert.strictEqual(JSON.stringify(api.getParseDebugInfo().missingNumbers), JSON.stringify([]));
+
+const questionLineOnly = api.parseArticleText('27. JULI–2. AUGUST 2026\nTestartikkel\nFOKUS\nFokus her.\n1, 2. Hva skjedde? Svaret ditt\nDET han sier er viktig for alle nå\n2 Dette er tekst for avsnitt 2');
+assert.strictEqual(questionLineOnly.para_lengths.length, 2);
+assert.strictEqual(JSON.stringify(api.getParseDebugInfo().keptParagraphNumbers), JSON.stringify([1, 2]));
+
+api.parseArticleText(makeImplicitFirstArticle(5, 4));
+assert.strictEqual(JSON.stringify(api.getParseDebugInfo().missingNumbers), JSON.stringify([4]));
+assert.match(api.getParseDebugInfo().validationWarnings.join('\n'), /Hull i avsnittsnummerrekken: mangler avsnitt 4/);
+
 
 api.handleEditableFieldChange('week_start', '2026-08-03');
 assert.strictEqual(api.getEditablePayload().week_start, '2026-08-03');
