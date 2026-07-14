@@ -732,22 +732,22 @@
       else if (text === title) type = 'title';
       else if (/^FOKUS$/i.test(text)) { type = 'focus_header'; focusTextNext = true; }
       else if (focusTextNext) { type = 'focus_text'; focusTextNext = false; }
-      else if (/^Svaret ditt$/i.test(text)) {
+      else if (/^(Svaret ditt|Svarene dine)$/i.test(text)) {
         type = 'answer_marker';
-        pendingImplicitBody = Boolean(implicitAnchorHeaderLine);
+        pendingImplicitBody = true;
       }
       else if (/^(Bildeserie:|Bilde:|Bildetekst:)/i.test(text) || /\(Se avsnittene?\s+\d+\s+og\s+\d+\)/i.test(text)) type = 'image_caption';
+      else if (pendingImplicitBody) type = 'implicit_body_paragraph';
       else if (/^[A-ZÆØÅ0-9 ?!.,:–-]{8,}$/.test(text)) type = 'section_header';
       else if (/^\d+(?:\s*,\s*\d+)\./.test(text)) type = 'question_header';
       else if (/^\d+\.\s+.*\?/.test(text)) type = 'question_header';
       else if (/^\d+\.\s*\(?(?:[A-ZÆØÅ].*)?\bLes\b.+\d+[:.\d–-]/i.test(text) && !/^\d+\s+/.test(text)) type = 'question_header';
       else if (/^\d+\s+/.test(text)) type = 'body_paragraph';
       else if (/^\d+\.\s+/.test(text)) type = 'question_header';
-      else if (pendingImplicitBody) type = 'implicit_body_paragraph';
 
       if (type === 'question_header'){
         implicitAnchorHeaderLine = entry.line;
-        pendingImplicitBody = false;
+        pendingImplicitBody = /\b(Svaret ditt|Svarene dine)\b/i.test(text);
       } else if (type === 'body_paragraph' || type === 'implicit_body_paragraph'){
         pendingImplicitBody = false;
       } else if (!['answer_marker', 'ignore'].includes(type)){
@@ -897,18 +897,31 @@
       ...syntheticBodyEntries
     ];
 
+    const explicitNumbers = bodyCandidates
+      .map((entry)=> entry.text.match(/^(\d+)\.?\s+/))
+      .filter(Boolean)
+      .map((m)=> Number(m[1]))
+      .filter(Boolean);
+    const firstExplicitNumber = explicitNumbers.length ? Math.min(...explicitNumbers) : 0;
+    let usedImplicitParagraphOne = false;
+
     const paragraphItems = bodyCandidates
       .map((entry)=>{
         const m = entry.text.match(/^(\d+)\.?\s+(.+)$/);
         const map = mappingByLine.get(entry.line);
-        const number = m ? Number(m[1]) : (map?.inferredNumber || 0);
-        const clean = (m ? m[2] : entry.text).replace(/\bSvaret ditt\b/gi, '').trim();
+        let number = m ? Number(m[1]) : (map?.inferredNumber || 0);
+        if (!number && entry.type === 'implicit_body_paragraph' && firstExplicitNumber === 2 && !usedImplicitParagraphOne){
+          number = 1;
+          usedImplicitParagraphOne = true;
+        }
+        const clean = (m ? m[2] : entry.text).replace(/\b(Svaret ditt|Svarene dine)\b/gi, '').trim();
         return {
           number,
           text: clean,
           length: countWords(clean),
           sourceLine: entry.line,
           sourceType: entry.type,
+          inferredImplicitParagraphOne: !m && number === 1 && !map,
           mappedFromQuestion: map ? {headerLine: map.headerLine, headerText: map.headerText} : null
         };
       })
@@ -932,6 +945,15 @@
       seen.add(p.number);
       ordered.push(p);
     });
+    const keptNumbers = ordered.map((p)=> p.number);
+    const highestNumber = keptNumbers.length ? Math.max(...keptNumbers) : 0;
+    const missingNumbers = [];
+    for (let i=1; i<=highestNumber; i+=1){
+      if (!keptNumbers.includes(i)) missingNumbers.push(i);
+    }
+    const validationWarnings = missingNumbers.length
+      ? [`Hull i avsnittsnummerrekken: mangler avsnitt ${missingNumbers.join(', ')} mellom 1 og ${highestNumber}.`]
+      : [];
     const debugRows = paragraphItems.map((p)=> ({
       paragraph: p.number,
       sourceLine: p.sourceLine,
@@ -942,9 +964,12 @@
     }));
     return {
       paragraphItems: ordered,
-      para_lengths: ordered.map((p)=> p.length),
+      para_lengths: Array.from({length: highestNumber}, (_, idx)=> ordered.find((p)=> p.number === idx + 1)?.length || 0),
       debugRows,
-      droppedRows: dropLog
+      droppedRows: dropLog,
+      validationWarnings,
+      missingNumbers,
+      highestNumber
     };
   }
 
@@ -971,7 +996,7 @@
     const answerMappings = groupQuestionHeaderWithAnswerBlocks(classified, questionHeaders);
     const combinedHeaders = questionHeaders.map((q)=> q.numbers).filter((nums)=> nums.length > 1);
     const groups = buildGroupsFromCombinedHeaders(combinedHeaders);
-    const {paragraphItems, para_lengths, debugRows, droppedRows} = buildLogicalParagraphs(classified, answerMappings);
+    const {paragraphItems, para_lengths, debugRows, droppedRows, validationWarnings, missingNumbers, highestNumber} = buildLogicalParagraphs(classified, answerMappings);
     const readResult = detectReadReferences(paragraphItems, questionHeaders);
     const images = detectImageReferences(classified.filter((entry)=> entry.type === 'image_caption').map((entry)=> entry.text).join('\n'));
     const frames = [];
@@ -997,6 +1022,9 @@
       paragraphBlocks: paragraphItems.map((p)=> ({paragraph: p.number, sourceLine: p.sourceLine, preview: p.text.slice(0, 120)})),
       paragraphDebugTable: debugRows,
       droppedParagraphs: droppedRows,
+      validationWarnings,
+      missingNumbers,
+      highestParagraphNumber: highestNumber,
       keptParagraphNumbers: paragraphItems.map((p)=> p.number),
       readReasons: readResult.reasons,
       groupReasons: combinedHeaders.map((nums)=> ({numbers: nums, group: buildGroupsFromCombinedHeaders([nums])})),
@@ -1922,7 +1950,8 @@ Bildeserie: Se avsnittene 9 og 10.
     handleEditableFieldChange,
     updateParagraphLengthAt,
     buildBreakdown,
-    countWords
+    countWords,
+    getParseDebugInfo: ()=> parseDebugInfo
   };
 
   function applyAll(){
