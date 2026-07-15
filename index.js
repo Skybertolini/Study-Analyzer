@@ -928,6 +928,66 @@
     return {images: [...images].sort((a,b)=> a-b), warnings, reasons};
   }
 
+  function frameReferenceRegex(){
+    return /\bse[\s.,;:!?()[\]«»"“”‘’'–-]+(?:også[\s.,;:!?()[\]«»"“”‘’'–-]+)?rammen\b/gi;
+  }
+
+  function detectFrameReferencesFromQuestions(classified){
+    const frames = new Set();
+    const reasons = [];
+    const referenceRe = frameReferenceRegex();
+    const partMarkerRe = /\(([a-zæøå])\)/gi;
+    findQuestionBlocks(classified).forEach((block)=>{
+      const text = block.text;
+      let m;
+      referenceRe.lastIndex = 0;
+      while ((m = referenceRe.exec(text)) !== null){
+        const parts = [];
+        let p;
+        partMarkerRe.lastIndex = 0;
+        while ((p = partMarkerRe.exec(text)) !== null){
+          if (p.index > m.index) break;
+          parts.push({letter: p[1].toLowerCase(), index: p.index});
+        }
+        let target = null;
+        if (parts.length){
+          const code = parts[parts.length - 1].letter.charCodeAt(0) - 'a'.charCodeAt(0);
+          target = block.numbers[code] || null;
+        } else if (block.numbers.length >= 1){
+          target = block.numbers[0];
+        }
+        if (target){
+          frames.add(target);
+          reasons.push({paragraph: target, source: 'question_header', line: block.line, evidence: m[0]});
+        }
+      }
+    });
+    return {frames: [...frames].sort((a,b)=> a-b), reasons};
+  }
+
+  function detectFrameReferencesFromParagraphs(paragraphItems){
+    const frames = new Set();
+    const reasons = [];
+    paragraphItems.forEach((p)=>{
+      const referenceRe = frameReferenceRegex();
+      let m;
+      while ((m = referenceRe.exec(p.text)) !== null){
+        frames.add(p.number);
+        reasons.push({paragraph: p.number, source: 'body_paragraph', line: p.sourceLine, evidence: m[0]});
+      }
+    });
+    return {frames: [...frames].sort((a,b)=> a-b), reasons};
+  }
+
+  function detectFrameReferences(paragraphItems, classified){
+    const fromQuestions = detectFrameReferencesFromQuestions(classified);
+    const fromParagraphs = detectFrameReferencesFromParagraphs(paragraphItems);
+    return {
+      frames: [...new Set([...fromQuestions.frames, ...fromParagraphs.frames])].sort((a,b)=> a-b),
+      reasons: [...fromQuestions.reasons, ...fromParagraphs.reasons]
+    };
+  }
+
   function countWords(text){
     return String(text || '').trim().split(/\s+/).filter(Boolean).length;
   }
@@ -1111,9 +1171,10 @@
     const {paragraphItems, para_lengths, debugRows, droppedRows, validationWarnings, missingNumbers, highestNumber} = buildLogicalParagraphs(classified, answerMappings);
     const readResult = detectReadReferences(paragraphItems, questionHeaders);
     const imageResult = detectImageReferencesFromQuestions(classified);
+    const frameResult = detectFrameReferences(paragraphItems, classified);
     const images = imageResult.images;
     const allValidationWarnings = [...validationWarnings, ...imageResult.warnings];
-    const frames = [];
+    const frames = frameResult.frames;
     const ignored = classified.filter((entry)=> !['question_header', 'body_paragraph', 'implicit_body_paragraph'].includes(entry.type));
 
     parseDebugInfo = {
@@ -1142,6 +1203,7 @@
       keptParagraphNumbers: paragraphItems.map((p)=> p.number),
       readReasons: readResult.reasons,
       imageReasons: imageResult.reasons,
+      frameReasons: frameResult.reasons,
       imageWarnings: imageResult.warnings,
       groupReasons: combinedHeaders.map((nums)=> ({numbers: nums, group: buildGroupsFromCombinedHeaders([nums])})),
       groups
