@@ -156,4 +156,19 @@ assert.match(api.getParseDebugInfo().validationWarnings.join('\n'), /Hull i avsn
 api.handleEditableFieldChange('week_start', '2026-08-03');
 assert.strictEqual(api.getEditablePayload().week_start, '2026-08-03');
 
+api.setDetectedAndEditableData({ week_start: '2026-07-27' });
+assert.strictEqual(api.hasActiveArticleData(), true);
+api.setDetectedAndEditableData({ para_lengths: [12, 18] });
+assert.strictEqual(api.hasActiveArticleData(), true);
+api.handleEditableFieldChange('para_lengths', '');
+api.handleEditableFieldChange('week_start', '');
+api.handleEditableFieldChange('title', '');
+api.handleEditableFieldChange('groups', '');
+api.handleEditableFieldChange('reads', '');
+api.handleEditableFieldChange('frames', '');
+api.handleEditableFieldChange('images', '');
+assert.strictEqual(api.hasActiveArticleData(), true);
+api.setDetectedAndEditableData({});
+assert.strictEqual(api.hasActiveArticleData(), false);
+
 console.log('All Study Analyzer tests passed');
