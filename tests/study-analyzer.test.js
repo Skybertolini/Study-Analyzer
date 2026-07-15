@@ -227,11 +227,20 @@ Hva mer bør man tenke på? (Se også bildene.)
 
 Svaret ditt`, `5 Svar for avsnitt fem.`)), JSON.stringify([5]));
 
+assert.strictEqual(parsedImages(articleWithQuestion(`8, 9. Hva bør du gjøre hvis du begynner å tvile? (Se også bildet.)
+
+Svarene dine`, `8 Svar for avsnitt åtte.
+9 Svar for avsnitt ni.`)), JSON.stringify([8]));
+
+assert.strictEqual(parsedImages(articleWithQuestion(`8–9. Hva bør du gjøre hvis du begynner å tvile? (Se også bildet.)
+
+Svarene dine`, `8 Svar for avsnitt åtte.
+9 Svar for avsnitt ni.`)), JSON.stringify([8]));
+
 assert.strictEqual(parsedImages(articleWithQuestion(`7, 8. Hvorfor er dette viktig? (Se også bildet.)
 
 Svarene dine`, `7 Svar for avsnitt sju.
-8 Svar for avsnitt åtte.`)), JSON.stringify([]));
-assert.match(api.getParseDebugInfo().imageWarnings.join('\n'), /Tvetydig bildehenvisning/);
+8 Svar for avsnitt åtte.`)), JSON.stringify([7]));
 
 assert.strictEqual(parsedImages(articleWithQuestion(`7–8. (a) Hva kan hjelpe oss? (Se også bildet.)
 (b) Hvordan kan prinsipper hjelpe oss?

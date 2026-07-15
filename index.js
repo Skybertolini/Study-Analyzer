@@ -910,6 +910,8 @@
           if (!target) warnings.push(`Bildehenvisning på linje ${block.line} peker på del (${parts[parts.length - 1].letter}), men avsnittsnummer mangler for denne delen.`);
         } else if (block.numbers.length === 1){
           target = block.numbers[0];
+        } else if (block.numbers.length > 1){
+          target = block.numbers[0];
         } else if (captionNumber && block.numbers.includes(captionNumber)){
           target = captionNumber;
         } else {
