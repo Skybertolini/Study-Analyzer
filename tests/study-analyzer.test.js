@@ -1,3 +1,4 @@
+(async () => {
 const assert = require('assert');
 const fs = require('fs');
 const vm = require('vm');
@@ -14,7 +15,12 @@ class FakeElement {
     this.textContent = '';
     this.hidden = false;
     this.__listeners = {};
-    this.classList = { contains: (name) => String(this.className).split(/\s+/).includes(name), toggle(){}, add(){}, remove(){} };
+    this.classList = {
+      contains: (name) => String(this.className).split(/\s+/).includes(name),
+      add: (...names) => { this.className = Array.from(new Set([...String(this.className).split(/\s+/).filter(Boolean), ...names])).join(' '); },
+      remove: (...names) => { const remove = new Set(names); this.className = String(this.className).split(/\s+/).filter((name) => name && !remove.has(name)).join(' '); },
+      toggle: (name, force) => { const has = this.classList.contains(name); if (force === true || (!has && force !== false)) this.classList.add(name); else if (has && force !== true) this.classList.remove(name); }
+    };
   }
   setAttribute(name, value) { this.attributes[name] = String(value); if (name === 'id') this.id = String(value); if (name === 'class') this.className = String(value); }
   getAttribute(name) { return this.attributes[name] || ''; }
@@ -56,14 +62,19 @@ const document = {
 };
 register('#vt-para-length-grid', new FakeElement('div'));
 register('#vt-json-preview', new FakeElement('pre'));
+register('#vt-overview-json-preview', new FakeElement('pre'));
+register('#vt-copy-toast', new FakeElement('div'));
 register('#vt-locked-result', new FakeElement('div'));
 register('#vt-parse-debug', new FakeElement('pre'));
 
+const timeouts = [];
 const context = {
   window: {}, document, console,
   Intl, Date, Number, String, Array, Object, Math, RegExp, Set, Map, JSON,
   MutationObserver: class { observe(){} },
   requestAnimationFrame: () => {},
+  setTimeout: (cb, ms) => { const timer = { cb, ms, cleared: false }; timeouts.push(timer); return timer; },
+  clearTimeout: (timer) => { if (timer) timer.cleared = true; },
   navigator: {}, Blob: class {}, URL: { createObjectURL(){ return ''; }, revokeObjectURL(){} }
 };
 context.window = context;
@@ -111,6 +122,37 @@ assert.strictEqual(api.getEditablePayload().para_lengths[0], 140);
 assert.strictEqual(JSON.parse(elements.get('#vt-json-preview').textContent).para_lengths[0], 140);
 assert.strictEqual(api.buildBreakdown().inputs.paraLengths[0], 140);
 assert.strictEqual(api.buildBreakdown().inputs.wordCount, 160);
+
+const expectedJson = api.getCompactEditableJson();
+assert.strictEqual(elements.get('#vt-json-preview').textContent, expectedJson);
+assert.strictEqual(elements.get('#vt-overview-json-preview').textContent, expectedJson);
+
+let copiedText = '';
+context.navigator.clipboard = { writeText: (text) => { copiedText = text; return Promise.resolve(); } };
+api.copyEditableJson();
+assert.strictEqual(copiedText, expectedJson);
+await Promise.resolve();
+assert.strictEqual(elements.get('#vt-copy-toast').textContent, '✅ JSON kopiert!');
+assert.strictEqual(elements.get('#vt-copy-toast').classList.contains('is-visible'), true);
+const firstTimer = timeouts.at(-1);
+assert.strictEqual(firstTimer.ms, 3000);
+firstTimer.cb();
+assert.strictEqual(elements.get('#vt-copy-toast').classList.contains('is-visible'), false);
+
+api.copyEditableJson();
+await Promise.resolve();
+const secondTimer = timeouts.at(-1);
+api.copyEditableJson();
+await Promise.resolve();
+const thirdTimer = timeouts.at(-1);
+assert.strictEqual(secondTimer.cleared, true);
+assert.notStrictEqual(secondTimer, thirdTimer);
+assert.strictEqual(thirdTimer.ms, 3000);
+assert.strictEqual(elements.get('#vt-copy-toast').classList.contains('is-visible'), true);
+if (!secondTimer.cleared) secondTimer.cb();
+assert.strictEqual(elements.get('#vt-copy-toast').classList.contains('is-visible'), true);
+thirdTimer.cb();
+assert.strictEqual(elements.get('#vt-copy-toast').classList.contains('is-visible'), false);
 assert.strictEqual(api.countWords('Dette er markert tekst'), 4);
 assert.strictEqual(api.countWords(''), 0);
 function makeImplicitFirstArticle(lastNumber, skipNumber) {
@@ -289,4 +331,6 @@ assert.strictEqual(parsedFrames(articleWithQuestion(`6. Hva bør vi gjøre? (  s
 
 Svaret ditt`, `6 Svar for avsnitt seks.`)), JSON.stringify([6]));
 
+
 console.log('All Study Analyzer tests passed');
+})().catch((err) => { console.error(err); process.exit(1); });

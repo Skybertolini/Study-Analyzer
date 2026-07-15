@@ -130,6 +130,32 @@
         font-family:ui-monospace, SFMono-Regular, Menlo, monospace;
         white-space:pre-wrap;
       }
+      .vt-json-preview--compact{
+        white-space:nowrap;
+        overflow-x:auto;
+        overflow-y:hidden;
+        max-height:120px;
+      }
+      .vt-copy-toast{
+        position:fixed;
+        top:50%;
+        left:50%;
+        transform:translate(-50%, -50%);
+        z-index:1000;
+        pointer-events:none;
+        opacity:0;
+        transition:opacity .25s ease;
+        color:var(--vt-text);
+        background:color-mix(in oklab, var(--vt-surface) 65%, transparent);
+        border:1px solid color-mix(in oklab, var(--vt-border) 65%, transparent);
+        border-radius:var(--vt-radius-lg);
+        padding:var(--vt-space-4) var(--vt-space-5);
+        font-size:clamp(2rem, 6vw, 4.5rem);
+        font-weight:800;
+        text-align:center;
+        box-shadow:var(--vt-shadow-md);
+      }
+      .vt-copy-toast.is-visible{ opacity:.82; }
       .vt-section-spacer{ margin-top:var(--vt-space-4); }
 
       .vt-btn{
@@ -1226,11 +1252,16 @@
     host.textContent = parseDebugInfo ? JSON.stringify(parseDebugInfo, null, 2) : 'Ingen parser-debug enda.';
   }
 
+  function getCompactEditableJson(){
+    return JSON.stringify(getEditablePayload());
+  }
+
   function syncJsonPreview(){
-    const payload = getEditablePayload();
-    const jsonHost = $('#vt-json-preview');
-    if (!jsonHost) return;
-    jsonHost.textContent = JSON.stringify(payload);
+    const json = getCompactEditableJson();
+    ['#vt-json-preview', '#vt-overview-json-preview'].forEach((selector)=>{
+      const jsonHost = $(selector);
+      if (jsonHost) jsonHost.textContent = json;
+    });
   }
 
 
@@ -1352,12 +1383,29 @@
     syncDataBindings();
   }
 
+  let copyToastTimer = null;
+
+  function showCopyToast(message){
+    const toast = $('#vt-copy-toast');
+    if (!toast) return;
+    toast.textContent = message;
+    toast.classList.add('is-visible');
+    if (copyToastTimer) clearTimeout(copyToastTimer);
+    copyToastTimer = setTimeout(()=>{
+      toast.classList.remove('is-visible');
+      copyToastTimer = null;
+    }, 3000);
+  }
+
   function copyEditableJson(){
-    const payload = getEditablePayload();
-    const json = JSON.stringify(payload);
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(json).catch(()=>{});
+    const json = getCompactEditableJson();
+    if (!navigator.clipboard?.writeText) {
+      showCopyToast('Kunne ikke kopiere JSON');
+      return Promise.resolve(false);
     }
+    return navigator.clipboard.writeText(json)
+      .then(()=>{ showCopyToast('✅ JSON kopiert!'); return true; })
+      .catch(()=>{ showCopyToast('Kunne ikke kopiere JSON'); return false; });
   }
 
 
@@ -1488,11 +1536,23 @@ Bildeserie: Se avsnittene 9 og 10.
           <h2>Oversikt</h2>
           <p>Oppsummering av tilgjengelige inputverdier.</p>
           <div class="vt-section-spacer" id="vt-info-slot"></div>
+          <pre id="vt-overview-json-preview" class="vt-json-preview vt-json-preview--compact" aria-live="polite"></pre>
+          <div class="vt-actions vt-section-spacer">
+            <button id="vt-copy-json-overview" class="vt-btn vt-btn--primary">Kopier JSON</button>
+          </div>
         </article>
       </aside>
     `;
     const rootChildren = Array.from(document.body.children).filter((el)=> el.id !== 'vt-topbar' && el.id !== 'vt-preview-modal');
     document.body.appendChild(main);
+    if (!$('#vt-copy-toast')) {
+      const toast = document.createElement('div');
+      toast.id = 'vt-copy-toast';
+      toast.className = 'vt-copy-toast';
+      toast.setAttribute('role', 'status');
+      toast.setAttribute('aria-live', 'polite');
+      document.body.appendChild(toast);
+    }
 
     const timeline = $('#timeline');
     if (timeline) $('#vt-timeline-slot').appendChild(timeline);
@@ -2051,11 +2111,13 @@ Bildeserie: Se avsnittene 9 og 10.
     }
 
 
-    const copyBtn = $('#vt-copy-json');
-    if (copyBtn && !copyBtn.__vtBound){
-      copyBtn.__vtBound = true;
-      copyBtn.addEventListener('click', copyEditableJson);
-    }
+    ['#vt-copy-json', '#vt-copy-json-overview'].forEach((selector)=>{
+      const copyBtn = $(selector);
+      if (copyBtn && !copyBtn.__vtBound){
+        copyBtn.__vtBound = true;
+        copyBtn.addEventListener('click', copyEditableJson);
+      }
+    });
   }
 
   /* ========== keep message stable ========== */
@@ -2086,7 +2148,11 @@ Bildeserie: Se avsnittene 9 og 10.
     buildBreakdown,
     countWords,
     hasActiveArticleData,
-    getParseDebugInfo: ()=> parseDebugInfo
+    getParseDebugInfo: ()=> parseDebugInfo,
+    getCompactEditableJson,
+    syncJsonPreview,
+    copyEditableJson,
+    showCopyToast: (message)=> showCopyToast(message)
   };
 
   function applyAll(){
@@ -2096,6 +2162,7 @@ Bildeserie: Se avsnittene 9 og 10.
     const paraGrid = $('#vt-para-length-grid');
     const activeParaInput = document.activeElement?.classList?.contains('vt-para-length-input');
     if (paraGrid && !activeParaInput && !paraGrid.children.length) renderParagraphLengthInputs();
+    syncJsonPreview();
     renderTimelineFromActiveData();
     applyTwoToneWithGroups();
     layoutPins();
