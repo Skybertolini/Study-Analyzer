@@ -171,4 +171,72 @@ assert.strictEqual(api.hasActiveArticleData(), true);
 api.setDetectedAndEditableData({});
 assert.strictEqual(api.hasActiveArticleData(), false);
 
+function articleWithQuestion(questionBlock, answerBlock = 'Dette er svartekst for artikkelen.') {
+  return `27. JULI–2. AUGUST 2026
+Testartikkel
+FOKUS
+Fokus her.
+${questionBlock}
+${answerBlock}`;
+}
+
+function parsedImages(text) {
+  api.setDetectedAndEditableData(api.parseArticleText(text));
+  return JSON.stringify(api.getEditablePayload().images);
+}
+
+assert.strictEqual(parsedImages(articleWithQuestion(`7, 8. (a) Hva kan hjelpe oss?
+(b) Hvordan kan bibelske prinsipper hjelpe oss?
+(Se også bildet.)
+
+Svarene dine`, `7 Svar for avsnitt sju.
+8 Svar for avsnitt åtte.`)), JSON.stringify([8]));
+
+assert.strictEqual(parsedImages(articleWithQuestion(`7, 8. (a) Hva kan hjelpe oss?
+(Se også bildet.)
+(b) Hvordan kan bibelske prinsipper hjelpe oss?
+
+Svarene dine`, `7 Svar for avsnitt sju.
+8 Svar for avsnitt åtte.`)), JSON.stringify([7]));
+
+assert.strictEqual(parsedImages(articleWithQuestion(`5. Når bør man begynne å tenke på dette? (Se også bildet.)
+
+Svaret ditt`, `5 Svar for avsnitt fem.`)), JSON.stringify([5]));
+
+assert.strictEqual(parsedImages(articleWithQuestion(`5. Når bør man begynne å tenke på dette? (Se også bildene.)
+
+Svaret ditt`, `5 Svar for avsnitt fem.`)), JSON.stringify([5]));
+
+assert.strictEqual(parsedImages(articleWithQuestion(`7, 8. (a) Hva kan hjelpe oss
+når vi har det vanskelig?
+(b) Hvordan kan bibelske prinsipper
+hjelpe oss?   (  Se   også   bildet  . )
+
+Svarene dine`, `7 Svar for avsnitt sju.
+8 Svar for avsnitt åtte.`)), JSON.stringify([8]));
+
+assert.strictEqual(parsedImages(articleWithQuestion(`5. Når bør man begynne å tenke på dette?
+
+Svaret ditt`, `5 Svar for avsnitt fem.
+Bildetekst: (Se også bildet.)
+REPETISJONSSPØRSMÅL
+1. Hva lærte du? (Se også bildet.)`)), JSON.stringify([]));
+
+assert.strictEqual(parsedImages(articleWithQuestion(`5. Når bør man begynne? (Se også bildet.)
+Hva mer bør man tenke på? (Se også bildene.)
+
+Svaret ditt`, `5 Svar for avsnitt fem.`)), JSON.stringify([5]));
+
+assert.strictEqual(parsedImages(articleWithQuestion(`7, 8. Hvorfor er dette viktig? (Se også bildet.)
+
+Svarene dine`, `7 Svar for avsnitt sju.
+8 Svar for avsnitt åtte.`)), JSON.stringify([]));
+assert.match(api.getParseDebugInfo().imageWarnings.join('\n'), /Tvetydig bildehenvisning/);
+
+assert.strictEqual(parsedImages(articleWithQuestion(`7–8. (a) Hva kan hjelpe oss? (Se også bildet.)
+(b) Hvordan kan prinsipper hjelpe oss?
+
+Svarene dine`, `7 Svar for avsnitt sju.
+8 Svar for avsnitt åtte.`)), JSON.stringify([7]));
+
 console.log('All Study Analyzer tests passed');

@@ -779,7 +779,7 @@
       else if (/^(Bildeserie:|Bilde:|Bildetekst:)/i.test(text) || /\(Se avsnittene?\s+\d+\s+og\s+\d+\)/i.test(text)) type = 'image_caption';
       else if (pendingImplicitBody) type = 'implicit_body_paragraph';
       else if (/^[A-ZÆØÅ0-9 ?!.,:–-]{8,}$/.test(text)) type = 'section_header';
-      else if (/^\d+(?:\s*,\s*\d+)\./.test(text)) type = 'question_header';
+      else if (/^\d+(?:\s*(?:,|[–-])\s*\d+)*\./.test(text)) type = 'question_header';
       else if (/^\d+\.\s+.*\?/.test(text)) type = 'question_header';
       else if (/^\d+\.\s*\(?(?:[A-ZÆØÅ].*)?\bLes\b.+\d+[:.\d–-]/i.test(text) && !/^\d+\s+/.test(text)) type = 'question_header';
       else if (/^\d+\s+/.test(text)) type = 'body_paragraph';
@@ -798,12 +798,29 @@
     return classified;
   }
 
+  function parseQuestionParagraphNumbers(text){
+    const m = String(text || '').match(/^(\d+(?:\s*(?:,|[–-])\s*\d+)*)\./);
+    if (!m) return [];
+    const result = [];
+    m[1].split(/\s*,\s*/).forEach((token)=>{
+      const range = token.match(/^(\d+)\s*[–-]\s*(\d+)$/);
+      if (range){
+        const a = Number(range[1]);
+        const b = Number(range[2]);
+        for (let i=Math.min(a,b); i<=Math.max(a,b); i+=1) result.push(i);
+        return;
+      }
+      const n = Number(token.trim());
+      if (n) result.push(n);
+    });
+    return [...new Set(result)];
+  }
+
   function detectQuestionHeaders(classified){
     return classified
       .filter((entry)=> entry.type === 'question_header')
       .map((entry)=>{
-        const m = entry.text.match(/^(\d+(?:\s*,\s*\d+)*)\./);
-        const numbers = m ? m[1].split(',').map((v)=> Number(v.trim())).filter(Boolean) : [];
+        const numbers = parseQuestionParagraphNumbers(entry.text);
         return {...entry, numbers};
       });
   }
@@ -837,23 +854,77 @@
     return {reads: [...new Set(reads)].sort((a,b)=> a-b), reasons};
   }
 
-  function detectImageReferences(rawText){
+  function normalizeQuestionBlockText(text){
+    return String(text || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function findQuestionBlocks(classified){
+    const blocks = [];
+    let inReviewQuestions = false;
+    for (let i=0; i<classified.length; i+=1){
+      const entry = classified[i];
+      if (/^REPETISJONSSPØRSMÅL$/i.test(entry.text || '')) inReviewQuestions = true;
+      if (entry.type !== 'question_header' || inReviewQuestions) continue;
+      const lines = [];
+      const first = entry.text.split(/\bSvar(?:et|ene) dine\b/i)[0].trim();
+      if (first) lines.push(first);
+      if (/\bSvar(?:et|ene) dine\b/i.test(entry.text)){
+        blocks.push({line: entry.line, text: normalizeQuestionBlockText(lines.join(' ')), numbers: parseQuestionParagraphNumbers(entry.text)});
+        continue;
+      }
+      for (let j=i + 1; j<classified.length; j+=1){
+        const next = classified[j];
+        if (next.type === 'answer_marker') break;
+        if (next.type === 'question_header' || next.type === 'body_paragraph' || next.type === 'implicit_body_paragraph') break;
+        lines.push(next.text);
+      }
+      blocks.push({line: entry.line, text: normalizeQuestionBlockText(lines.join(' ')), numbers: parseQuestionParagraphNumbers(entry.text)});
+    }
+    return blocks;
+  }
+
+  function detectImageReferencesFromQuestions(classified){
     const images = new Set();
-    const text = String(rawText || '');
-    const patterns = [
-      /Se avsnittene\s+(\d+)\s+og\s+(\d+)/gi,
-      /avsnitt(?:ene)?\s+(\d+)\s*[–-]\s*(\d+)/gi
-    ];
-    patterns.forEach((re)=>{
+    const warnings = [];
+    const reasons = [];
+    const imageReferenceRe = /\(\s*Se\s+også\s+bild(?:et|ene)\s*\.?\s*\)/gi;
+    const partMarkerRe = /\(([a-zæøå])\)/gi;
+    findQuestionBlocks(classified).forEach((block)=>{
+      const text = block.text;
       let m;
-      while ((m = re.exec(text)) !== null){
-        const a = Number(m[1]);
-        const b = Number(m[2]);
-        if (!a || !b) continue;
-        for (let i=Math.min(a,b); i<=Math.max(a,b); i+=1) images.add(i);
+      imageReferenceRe.lastIndex = 0;
+      while ((m = imageReferenceRe.exec(text)) !== null){
+        const parts = [];
+        let p;
+        partMarkerRe.lastIndex = 0;
+        while ((p = partMarkerRe.exec(text)) !== null){
+          if (p.index > m.index) break;
+          parts.push({letter: p[1].toLowerCase(), index: p.index});
+        }
+        const captionMatch = text.slice(m.index).match(/\(\s*Se\s+avsnitt\s+(\d+)\s*\)/i);
+        const captionNumber = captionMatch ? Number(captionMatch[1]) : null;
+        let target = null;
+        if (parts.length){
+          const code = parts[parts.length - 1].letter.charCodeAt(0) - 'a'.charCodeAt(0);
+          target = block.numbers[code] || null;
+          if (!target) warnings.push(`Bildehenvisning på linje ${block.line} peker på del (${parts[parts.length - 1].letter}), men avsnittsnummer mangler for denne delen.`);
+        } else if (block.numbers.length === 1){
+          target = block.numbers[0];
+        } else if (captionNumber && block.numbers.includes(captionNumber)){
+          target = captionNumber;
+        } else {
+          warnings.push(`Tvetydig bildehenvisning på linje ${block.line}: flere avsnittsnummer uten a/b-inndeling.`);
+        }
+        if (target && captionNumber && target !== captionNumber){
+          warnings.push(`Bildehenvisning på linje ${block.line} peker på avsnitt ${target}, men bildeteksten peker på avsnitt ${captionNumber}.`);
+        }
+        if (target){
+          images.add(target);
+          reasons.push({paragraph: target, line: block.line, evidence: m[0]});
+        }
       }
     });
-    return [...images].sort((a,b)=> a-b);
+    return {images: [...images].sort((a,b)=> a-b), warnings, reasons};
   }
 
   function countWords(text){
@@ -1038,7 +1109,9 @@
     const groups = buildGroupsFromCombinedHeaders(combinedHeaders);
     const {paragraphItems, para_lengths, debugRows, droppedRows, validationWarnings, missingNumbers, highestNumber} = buildLogicalParagraphs(classified, answerMappings);
     const readResult = detectReadReferences(paragraphItems, questionHeaders);
-    const images = detectImageReferences(classified.filter((entry)=> entry.type === 'image_caption').map((entry)=> entry.text).join('\n'));
+    const imageResult = detectImageReferencesFromQuestions(classified);
+    const images = imageResult.images;
+    const allValidationWarnings = [...validationWarnings, ...imageResult.warnings];
     const frames = [];
     const ignored = classified.filter((entry)=> !['question_header', 'body_paragraph', 'implicit_body_paragraph'].includes(entry.type));
 
@@ -1062,11 +1135,13 @@
       paragraphBlocks: paragraphItems.map((p)=> ({paragraph: p.number, sourceLine: p.sourceLine, preview: p.text.slice(0, 120)})),
       paragraphDebugTable: debugRows,
       droppedParagraphs: droppedRows,
-      validationWarnings,
+      validationWarnings: allValidationWarnings,
       missingNumbers,
       highestParagraphNumber: highestNumber,
       keptParagraphNumbers: paragraphItems.map((p)=> p.number),
       readReasons: readResult.reasons,
+      imageReasons: imageResult.reasons,
+      imageWarnings: imageResult.warnings,
       groupReasons: combinedHeaders.map((nums)=> ({numbers: nums, group: buildGroupsFromCombinedHeaders([nums])})),
       groups
     };
