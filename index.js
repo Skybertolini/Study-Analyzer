@@ -380,15 +380,17 @@
       return [arr];
     });
   }
-  function hasActiveArticleData(){
+  function articleDataLooksAnalyzed(data = {}){
+    const paraLengths = Array.isArray(data.para_lengths) ? data.para_lengths : [];
     return !!(
-      editableArticleData.para_lengths.length ||
-      String(editableArticleData.reads || '').trim() ||
-      String(editableArticleData.frames || '').trim() ||
-      String(editableArticleData.groups || '').trim() ||
-      String(editableArticleData.images || '').trim() ||
-      editableArticleData.title
+      paraLengths.length ||
+      String(data.week_start || '').trim() ||
+      String(data.title || '').trim()
     );
+  }
+
+  function hasActiveArticleData(){
+    return hasCompletedAnalysis || articleDataLooksAnalyzed(getActiveArticleData());
   }
 
   function getActiveArticleData(){
@@ -552,6 +554,7 @@
       <span><img class="ic" src="./img/box-icon.png" alt=""> <b>Rammer:</b> <span id="vt-frames">0</span></span>
       <span><img class="ic" src="./img/image-icon.png" alt=""> <b>Bilder:</b> <span id="vt-images">0</span></span>
     `;
+    if ((panel.textContent || '').trim() === 'Ingen artikkel analysert ennå.') panel.textContent = '';
     panel.appendChild(div);
     const hint = document.createElement('p');
     hint.id = 'vt-status-hint';
@@ -613,6 +616,7 @@
   let detectedArticleData = {...modelDefaults};
   let editableArticleData = {...modelDefaults};
   let parseDebugInfo = null;
+  let hasCompletedAnalysis = false;
   let jsonPreviewMode = 'pretty';
 
   function parseNumberList(value){
@@ -1102,6 +1106,7 @@
   function setDetectedAndEditableData(data){
     detectedArticleData = normalizeArticleData(data);
     editableArticleData = normalizeArticleData(data);
+    hasCompletedAnalysis = articleDataLooksAnalyzed(editableArticleData);
     window.__VT_DETECTED_ARTICLE_DATA = {...detectedArticleData};
     window.__VT_EDITABLE_ARTICLE_DATA = {...editableArticleData};
     syncEditableForm();
@@ -1198,6 +1203,8 @@
       fragment.appendChild(slot);
     }
     timeline.appendChild(fragment);
+    const msg = $('#message');
+    if (msg && (msg.textContent || '').trim() === 'Ingen artikkel analysert ennå.') msg.textContent = '';
   }
 
   function handleEditableFieldChange(field, rawValue){
@@ -1978,6 +1985,7 @@ Bildeserie: Se avsnittene 9 og 10.
     updateParagraphLengthAt,
     buildBreakdown,
     countWords,
+    hasActiveArticleData,
     getParseDebugInfo: ()=> parseDebugInfo
   };
 
