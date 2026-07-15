@@ -185,6 +185,11 @@ function parsedImages(text) {
   return JSON.stringify(api.getEditablePayload().images);
 }
 
+function parsedFrames(text) {
+  api.setDetectedAndEditableData(api.parseArticleText(text));
+  return JSON.stringify(api.getEditablePayload().frames);
+}
+
 assert.strictEqual(parsedImages(articleWithQuestion(`7, 8. (a) Hva kan hjelpe oss?
 (b) Hvordan kan bibelske prinsipper hjelpe oss?
 (Se også bildet.)
@@ -247,5 +252,41 @@ assert.strictEqual(parsedImages(articleWithQuestion(`7–8. (a) Hva kan hjelpe o
 
 Svarene dine`, `7 Svar for avsnitt sju.
 8 Svar for avsnitt åtte.`)), JSON.stringify([7]));
+
+assert.strictEqual(parsedFrames(articleWithQuestion(`5. Når bør man begynne å tenke på dette? (Se også rammen «En nyttig påminnelse».)
+
+Svaret ditt`, `5 Svar for avsnitt fem.`)), JSON.stringify([5]));
+
+assert.strictEqual(parsedFrames(articleWithQuestion(`7, 8. Hvorfor er dette viktig? (Se rammen «Hvis du trenger hjelp».)
+
+Svarene dine`, `7 Svar for avsnitt sju.
+8 Svar for avsnitt åtte.`)), JSON.stringify([7]));
+
+assert.strictEqual(parsedFrames(articleWithQuestion(`7, 8. (a) Hva kan hjelpe oss?
+(b) Hvordan kan bibelske prinsipper hjelpe oss? (Se også rammen «Gode spørsmål».)
+
+Svarene dine`, `7 Svar for avsnitt sju.
+8 Svar for avsnitt åtte.`)), JSON.stringify([8]));
+
+assert.strictEqual(parsedFrames(articleWithQuestion(`8. Hvordan kan du hjelpe andre?
+
+Svaret ditt`, `8 Svar for avsnitt åtte. (Se rammen «Spørsmål som hjelper oss når vi studerer med noen».)`)), JSON.stringify([8]));
+
+assert.strictEqual(parsedFrames(articleWithQuestion(`12, 13. Hva må vi huske på? (Galaterne 6:1; se også rammen «Hvis du er uenig».)
+
+Svarene dine`, `12 Svar for avsnitt tolv.
+13 Svar for avsnitt tretten.`)), JSON.stringify([12]));
+
+assert.strictEqual(parsedFrames(articleWithQuestion(`6. Hva bør vi gjøre? (Se rammen.)
+
+Svaret ditt`, `6 Svar for avsnitt seks.`)), JSON.stringify([6]));
+
+assert.strictEqual(parsedFrames(articleWithQuestion(`6. Hva bør vi gjøre med rammen rundt bildet?
+
+Svaret ditt`, `6 Svar for avsnitt seks med ordet rammen, men uten henvisning.`)), JSON.stringify([]));
+
+assert.strictEqual(parsedFrames(articleWithQuestion(`6. Hva bør vi gjøre? (  sE ,  OgSå   «RAMMEN»  : «Tittel». )
+
+Svaret ditt`, `6 Svar for avsnitt seks.`)), JSON.stringify([6]));
 
 console.log('All Study Analyzer tests passed');
