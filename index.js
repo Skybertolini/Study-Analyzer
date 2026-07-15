@@ -617,7 +617,6 @@
   let editableArticleData = {...modelDefaults};
   let parseDebugInfo = null;
   let hasCompletedAnalysis = false;
-  let jsonPreviewMode = 'pretty';
 
   function parseNumberList(value){
     const result = [];
@@ -1169,16 +1168,9 @@
     const payload = getEditablePayload();
     const jsonHost = $('#vt-json-preview');
     if (!jsonHost) return;
-    jsonHost.textContent = jsonPreviewMode === 'compact'
-      ? JSON.stringify(payload)
-      : JSON.stringify(payload, null, 2);
+    jsonHost.textContent = JSON.stringify(payload);
   }
 
-  function syncJsonModeTabs(){
-    $$('#vt-json-mode-tabs .vt-tab').forEach((tab)=>{
-      tab.classList.toggle('is-active', tab.getAttribute('data-json-mode') === jsonPreviewMode);
-    });
-  }
 
   function setDetectedAndEditableData(data){
     detectedArticleData = normalizeArticleData(data);
@@ -1244,7 +1236,6 @@
   function syncDataBindings(){
     const payload = getEditablePayload();
     syncJsonPreview();
-    syncJsonModeTabs();
     renderParseDebug();
     window.__VT_EXPORT_DATA = payload;
     window.__VT_EDITABLE_ARTICLE_DATA = {...editableArticleData};
@@ -1301,22 +1292,12 @@
 
   function copyEditableJson(){
     const payload = getEditablePayload();
-    const json = jsonPreviewMode === 'compact' ? JSON.stringify(payload) : JSON.stringify(payload, null, 2);
+    const json = JSON.stringify(payload);
     if (navigator.clipboard?.writeText) {
       navigator.clipboard.writeText(json).catch(()=>{});
     }
   }
 
-  function downloadEditableJson(){
-    const payload = getEditablePayload();
-    const json = jsonPreviewMode === 'compact' ? JSON.stringify(payload) : JSON.stringify(payload, null, 2);
-    const blob = new Blob([json], {type:'application/json'});
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'study-analyzer-resultat.json';
-    a.click();
-    setTimeout(()=> URL.revokeObjectURL(a.href), 400);
-  }
 
   function runParserExampleTest(){
     const sample = `9.–15. MARS 2026
@@ -1395,7 +1376,7 @@ Bildeserie: Se avsnittene 9 og 10.
         </article>
         <article class="vt-card" id="vt-card-adjust">
           <h2>Juster analyseresultat</h2>
-          <p>Overstyr feltene under. JSON-preview, beregning og eksport oppdateres live.</p>
+          <p>Overstyr feltene under. JSON-preview og beregning oppdateres live.</p>
           <div class="vt-section-spacer vt-grid-2">
             <div class="vt-field vt-date-wrap">
               <label for="vt-edit-week-start">week_start</label>
@@ -1424,11 +1405,6 @@ Bildeserie: Se avsnittene 9 og 10.
           </div>
           <div class="vt-actions">
             <button id="vt-copy-json" class="vt-btn">Kopier JSON</button>
-            <button id="vt-export-json" class="vt-btn">Eksporter JSON</button>
-            <div class="vt-tabs" id="vt-json-mode-tabs" aria-label="JSON-format">
-              <button class="vt-tab is-active" data-json-mode="pretty">Pretty</button>
-              <button class="vt-tab" data-json-mode="compact">Compact</button>
-            </div>
           </div>
           <pre id="vt-json-preview" class="vt-json-preview" aria-live="polite"></pre>
           <h3 style="margin:12px 0 6px">Advanced parse preview</h3>
@@ -2013,25 +1989,10 @@ Bildeserie: Se avsnittene 9 og 10.
     }
 
 
-    $$('#vt-json-mode-tabs .vt-tab').forEach((tab)=>{
-      if (tab.__vtBound) return;
-      tab.__vtBound = true;
-      tab.addEventListener('click', ()=>{
-        jsonPreviewMode = tab.getAttribute('data-json-mode') || 'pretty';
-        syncDataBindings();
-      });
-    });
-
     const copyBtn = $('#vt-copy-json');
     if (copyBtn && !copyBtn.__vtBound){
       copyBtn.__vtBound = true;
       copyBtn.addEventListener('click', copyEditableJson);
-    }
-
-    const exportBtn = $('#vt-export-json');
-    if (exportBtn && !exportBtn.__vtBound){
-      exportBtn.__vtBound = true;
-      exportBtn.addEventListener('click', downloadEditableJson);
     }
   }
 
